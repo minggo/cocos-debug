@@ -24,7 +24,8 @@
 	},
 	"dependencies": {
 		"vscode-debugprotocol": "~1.6.0-pre4",
-		"vscode-debugadapter": "~1.6.0-pre8"
+		"vscode-debugadapter": "~1.6.0-pre8",
+		"vscode-nls": "^1.0.2"
 	},
 	"devDependencies": {
 		"typescript": "^1.6.2",
@@ -39,27 +40,27 @@
 	"contributes": {
 		"debuggers": [
 			{
-				"type": "mock",
-				"label": "Mock Debug",
+				"type": "cocos",
+				"label": "Cocos Debug",
 
-				"enableBreakpointsFor": { "languageIds": [ "markdown" ] },
+				"enableBreakpointsFor": { "languageIds": [ "javascript" ] },
 
 				"program": "./out/mockDebug.js",
 				"runtime": "node",
 
 				"configurationAttributes": {
-					"launch": {
-						"required": [ "program" ],
+					"attach": {
+						"required": [ "port" ],
 						"properties": {
-							"program": {
-								"type": "string",
-								"description": "Workspace relative path to a text file.",
-								"default": "readme.md"
+							"port": {
+								"type": "number",
+								"description": "The debug port to attach to.",
+								"default": 5086
 							},
-							"stopOnEntry": {
-								"type": "boolean",
-								"description": "Automatically stop after launch.",
-								"default": true
+							"address": {
+								"type": "string",
+								"description": "The TCP/IP address of the port (remote addresses only supported for node >= 5.0).",
+								"default": "localhost"
 							}
 						}
 					}
@@ -67,11 +68,11 @@
 
 				"initialConfigurations": [
 					{
-						"name": "Mock-Debug",
-						"type": "mock",
-						"request": "launch",
-						"program": "readme.md",
-						"stopOnEntry": true
+						"name": "Cocos-Debug",
+						"type": "cocos",
+						"request": "attach",
+						"port": 5086,
+						"address": "localhost"
 					}
 				]
 			}

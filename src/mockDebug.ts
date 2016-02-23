@@ -1,53 +1,47 @@
-/*---------------------------------------------------------
- * Copyright (C) Microsoft Corporation. All rights reserved.
- *--------------------------------------------------------*/
-
 "use strict";
 
-import {DebugSession, InitializedEvent, TerminatedEvent, StoppedEvent, BreakpointEvent, OutputEvent, Thread, StackFrame, Scope, Source, Handles, Breakpoint} from 'vscode-debugadapter';
+import {DebugSession, InitializedEvent, TerminatedEvent, StoppedEvent, BreakpointEvent, OutputEvent,
+	Thread, StackFrame, Scope, Source, Handles, Breakpoint, ErrorDestination} from 'vscode-debugadapter';
 import {DebugProtocol} from 'vscode-debugprotocol';
-import {readFileSync} from 'fs';
-import {basename} from 'path';
+import * as net from 'net';
+import * as nls from 'vscode-nls';
 
+import {CocosFXProtocol, CocosFXEvent, CocosFXResponse} from './cocosFirefoxProtocol';
 
-/**
- * This interface should always match the schema found in the mock-debug extension manifest.
- */
-export interface LaunchRequestArguments {
-	/** An absolute path to the program to debug. */
-	program: string;
-	/** Automatically stop target after launch. If not specified, target does not stop. */
-	stopOnEntry?: boolean;
+export interface AttachRequestArguments {
+	// The debug port to attach to.
+	port: number;
+	// The file folder opened by VSCode
+	cwd: string;
+	// The TCP/IP address of the port (remote addresses only supported for node >= 5.0).
+	address?: string;
+	// Timeout to attach to remote.
+	timeout?: number;
 }
 
-class MockDebugSession extends DebugSession {
+enum ProjectType {
+	// The project is a cocos tests
+	TESTS,
+	JSB
+}
+
+class CocosDebugSession extends DebugSession {
 
 	// we don't support multiple threads, so we can use a hardcoded ID for the default thread
 	private static THREAD_ID = 1;
 
-	private _breakpointId = 1000;
+	private static ATTACH_TIMEOUT = 10000;
 
-	// the next line that will be 'executed'
-	private __currentLine = 0;
-	private get _currentLine() : number {
-		return this.__currentLine;
-    }
-	private set _currentLine(line: number) {
-		this.__currentLine = line;
-		this.sendEvent(new OutputEvent(`line: ${line}\n`));	// print current line on debug console
-	}
-
-	// the initial (and one and only) file we are debugging
-	private _sourceFile: string;
-
-	// the contents (= lines) of the one and only file
-	private _sourceLines = new Array<string>();
-
-	// maps from sourceFile to array of Breakpoints
-	private _breakPoints = new Map<string, DebugProtocol.Breakpoint[]>();
-
-	private _variableHandles = new Handles<string>();
-
+	private _trace: boolean = true;
+    private _cocos: CocosFXProtocol;
+	private _isTerminated: boolean = false;
+	private _localize: nls.LocalizeFunc = nls.loadMessageBundle();
+	private _sourceActorMap = {};
+	private _breakpointSourceActorMap = new Map<string, string>();
+	private _threadActor: string;
+	private _localScriptRoot: string;
+	private _prefixIndex: number;
+	private _projectType: ProjectType = ProjectType.TESTS;
 
 	/**
 	 * Creates a new debug adapter.
@@ -57,9 +51,47 @@ class MockDebugSession extends DebugSession {
 	public constructor() {
 		super();
 
+		// this debugger uses zero-based lines and columns which is the default
+		// so the following two calls are not really necessary.
+		this.setDebuggerLinesStartAt1(true);
+		this.setDebuggerColumnsStartAt1(true);
+
+		this._cocos = new CocosFXProtocol();
+
+		this._cocos.on('error', (event: CocosFXEvent) => {
+			this._termiated('cocos firefox protocol error: ' + event.reason)
+		});
+
+		this._cocos.on('close', (event: CocosFXEvent) => {
+			this._termiated('cocos firefox protocol close');
+		});
+
+		this._cocos.on('diagnostic', (event: CocosFXEvent) => {
+			console.error(event.reason);
+		})
+
 		// this debugger uses zero-based lines and columns
 		this.setDebuggerLinesStartAt1(false);
 		this.setDebuggerColumnsStartAt1(false);
+	}
+
+	public log(category: string, message: string): void {
+		if (this._trace) {
+			message = `${category}: ${message} \n`;
+			this.sendEvent(new OutputEvent(message));
+		}
+	}
+
+    /**
+	 * The debug session has terminated
+	 */
+	private _termiated(reason: string): void {
+		this.log('ar', `_termiated: ${reason}`);
+
+		if (!this._isTerminated) {
+			this._isTerminated = true;
+			this.sendEvent(new TerminatedEvent);
+		}
 	}
 
 	/**
@@ -68,72 +100,389 @@ class MockDebugSession extends DebugSession {
 	 */
 	protected initializeRequest(response: DebugProtocol.InitializeResponse, args: DebugProtocol.InitializeRequestArguments): void {
 
-		// since this debug adapter can accept configuration requests like 'setBreakpoint' at any time,
-		// we request them early by sending an 'initializeRequest' to the frontend.
-		// The frontend will end the configuration sequence by calling 'configurationDone' request.
-		this.sendEvent(new InitializedEvent());
-
-		// This debug adapter implements the configurationDoneRequest.
+		// This debug adapter supports configurationDoneRequest.
 		response.body.supportsConfigurationDoneRequest = true;
 
+		// This debug adapter supports function breakpoints.
+		response.body.supportsFunctionBreakpoints = true;
+
+		// TODO: supports conditional breakpoint
+		response.body.supportsConditionalBreakpoints = false;
+
+		// TODO: supports evaluate for hovers
+		response.body.supportsEvaluateForHovers = false;
+
 		this.sendResponse(response);
 	}
 
-	protected launchRequest(response: DebugProtocol.LaunchResponse, args: LaunchRequestArguments): void {
-		this._sourceFile = args.program;
-		this._sourceLines = readFileSync(this._sourceFile).toString().split('\n');
+    // -------------attach request-----------------------------------------------------------------
 
-		if (args.stopOnEntry) {
-			this._currentLine = 0;
-			this.sendResponse(response);
+	protected attachRequest(response: DebugProtocol.AttachResponse, args: AttachRequestArguments): void {
 
-			// we stop on the first line
-			this.sendEvent(new StoppedEvent("entry", MockDebugSession.THREAD_ID));
-		} else {
-			// we just start to run until we hit a breakpoint or an exception
-			this.continueRequest(response, { threadId: MockDebugSession.THREAD_ID });
-		}
-	}
+		let address = args.address ? args.address : '127.0.0.1';
+		let timeout = args.timeout ? args.timeout : CocosDebugSession.ATTACH_TIMEOUT;
 
-	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
+		this.log('ar', `attachRequest: address: ${address} port: ${args.port}`);
 
-		var path = args.source.path;
-		var clientLines = args.lines;
+		let connected = false;
+        const socket: net.Socket = new net.Socket();
+		socket.connect(args.port, address);
 
-		// read file contents into array for direct access
-		var lines = readFileSync(path).toString().split('\n');
+		socket.on('connect', (err: any) => {
+			this.log('ar', 'attachRequest: connected');
+			connected = true;
+			this._localScriptRoot = args.cwd;
+			this._prefixIndex = this._localScriptRoot.length + 1;
+			this._cocos.startDispatch(socket, socket);
+			this._initialize(response);
+		});
 
-		var breakpoints = new Array<Breakpoint>();
-
-		// verify breakpoint locations
-		for (var i = 0; i < clientLines.length; i++) {
-			var l = this.convertClientLineToDebugger(clientLines[i]);
-			var verified = false;
-			if (l < lines.length) {
-				const line = lines[l].trim();
-				// if a line is empty or starts with '+' we don't allow to set a breakpoint but move the breakpoint down
-				if (line.length == 0 || line.indexOf("+") == 0)
-					l++;
-				// if a line starts with '-' we don't allow to set a breakpoint but move the breakpoint up
-				if (line.indexOf("-") == 0)
-					l--;
-				// don't set 'verified' to true if the line contains the word 'lazy'
-				// in this case the breakpoint will be verified 'lazy' after hitting it once.
-				if (line.indexOf("lazy") < 0) {
-					verified = true;    // this breakpoint has been validated
+        const endTime = new Date().getTime() + timeout;
+		socket.on('error', (err: any) => {
+			if (connected) {
+				// error happpend after connected
+				this._termiated('socket error');
+			}
+			else {
+				if (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET') {
+					const now = new Date().getTime();
+					if (now < endTime) {
+						setTimeout(() => {
+							this.log('ar', 'attachRequest: retry socket.connect');
+							socket.connect(args.port);
+						}, 200);  // retry afater 200 ms
+					}
+					else {
+						this.sendErrorResponse(response, 2009, this._localize('VSND2009', "cannot connect to remote (timeout after {_timeout}ms)"), { _timeout: timeout });
+					}
+				}
+				else {
+					this.sendErrorResponse(response, 2010, this._localize('VSND2010', "cannot connect to remote (reason: {_error})"), { _error: err.message });
 				}
 			}
-			const bp = <DebugProtocol.Breakpoint> new Breakpoint(verified, this.convertDebuggerLineToClient(l));
-			bp.id = this._breakpointId++;
-			breakpoints.push(bp);
-		}
-		this._breakPoints[path] = breakpoints;
+		});
 
-		// send back the actual breakpoint positions
-		response.body = {
-			breakpoints: breakpoints
+		socket.on('end', (err: any) => {
+			this._termiated('socket end');
+		});
+	}
+
+    /**
+	 * Should get resources from remote and record the corredponding actors.
+	 */
+	private _initialize(respond: DebugProtocol.Response): void {
+
+		this._listTabs().then(cocosResponse => {
+			// listTabs request
+			return this._attachTab(cocosResponse.body);
+		}).then(cocosResponse => {
+			// attach thread actor
+			return this._attachThreadActor();
+		}).then(cocosRespond => {
+			// get sources
+			return this._getSources();
+		}).then(cocosRespond => {
+			// resume thread actor
+			return this._resumeThreadActor();
+		}).then(cocosRespond => {
+			// can set breakpoint now
+			this.sendEvent(new InitializedEvent());
+			this.sendResponse(respond);
+		}).catch(cocosResponse => {
+			console.error(cocosResponse.message);
+		});
+	}
+
+	private _listTabs(): Promise<CocosFXResponse> {
+		let request = {
+			to: 'root',
+			"type": 'listTabs'
 		};
-		this.sendResponse(response);
+		return this._cocos.command2(request).then(cocosRespond => {
+			if (!cocosRespond.success) {
+				return Promise.reject(cocosRespond);
+			}
+
+			let body = cocosRespond.body;
+			if (body.error) {
+				return Promise.reject(new CocosFXResponse('error in listTabs' + body.message));
+			}
+
+			let selected = body.selected;
+			let selectedTab = body.tabs[selected];
+
+            let response = new CocosFXResponse();
+			response.body = selectedTab.actor;
+			return Promise.resolve(response);
+		}).catch(cocosRespond => {
+			return Promise.reject(cocosRespond);
+		});
+	}
+
+	private _attachTab(tabActor: string): Promise<CocosFXResponse> {
+		let request = {
+			to: tabActor,
+			type: "attach"
+		}
+		return this._cocos.command2(request).then(cocosRespond => {
+			if (!cocosRespond.success) {
+				return Promise.reject(cocosRespond);
+			}
+
+			let body = cocosRespond.body;
+			if (body.type === 'tabAttached') {
+				this._threadActor = body.threadActor;
+				return Promise.resolve(new CocosFXResponse());
+			}
+			else {
+				return Promise.reject(new CocosFXResponse('error in attach tab'))
+			}
+		}).catch(cocosRespond => {
+			return Promise.reject(cocosRespond);
+		});
+	}
+
+	private _attachThreadActor(): Promise<CocosFXResponse> {
+		let request = {
+			to: this._threadActor,
+			type: 'attach',
+			useSourceMaps: true,
+			autoBlackBox: true
+		}
+		return this._cocos.command2(request).then(cocosRespond => {
+			if (!cocosRespond.success) {
+				return Promise.reject(cocosRespond);
+			}
+
+			let body = cocosRespond.body;
+			if (body.why && body.why.type === 'attached'){
+				return Promise.resolve(new CocosFXResponse());
+			}
+			else {
+				return Promise.reject(new CocosFXResponse('error in attach thread actor'));
+			}
+		}).catch(cocosRespond => {
+			return Promise.reject(cocosRespond);
+		});
+	}
+
+    private _getSources(): Promise<CocosFXResponse> {
+		const request = {
+			to: this._threadActor,
+			type: 'sources'
+		}
+		return this._cocos.command2(request).then(cocosRespond => {
+			if (!cocosRespond.success) {
+				return Promise.reject(cocosRespond);
+			}
+
+			const body = cocosRespond.body;
+			if (body.error) {
+				return Promise.reject(new CocosFXResponse('error in resources request'));
+			}
+
+            let sources = body.sources;
+            let prefix = this._getRoot(sources);
+			let prefixLength = prefix.length;
+			for (let source of sources) {
+				let url = source.url.substring(prefixLength + 1);
+				this._sourceActorMap[url] = source.actor;
+			};
+
+			return Promise.resolve(new CocosFXResponse());
+		}).catch(cocosRespond => {
+			return Promise.reject(cocosRespond);
+		});
+	}
+
+	private _resumeThreadActor(): Promise<void> {
+		let request = {
+			to: this._threadActor,
+			type: 'resume',
+			resumeLimit: null,
+			ignoreCaughtExceptions: true
+		}
+		return this._cocos.command2(request).then(cocosRespond => {
+			if (!cocosRespond.success) {
+				return Promise.reject(cocosRespond);
+			}
+
+            const body = cocosRespond.body;
+			if (body.error) {
+				return Promise.reject(new CocosFXResponse('error in resume thread actor'));
+			}
+			else {
+				return Promise.resolve();
+			}
+		}).catch(cocosRespond => {
+			return Promise.reject(cocosRespond);
+		});
+	}
+
+	/**
+	 * Get remote project root path.
+	 * We use the 'main.js' the get the root path.
+	 */
+	private _getRoot(sources: any): string {
+		let length = Number.MAX_VALUE;
+		let findPath = '';
+		for (let source of sources) {
+			let url = source.url;
+			if (url.endsWith('main.js') && url.length < length) {
+				length = url.length;
+				findPath = url;
+			}
+		}
+
+        // can not find main.js, an error happened
+		if (findPath.length === 0) {
+			this.log('ar', 'can not find main.js');
+			return '';
+		}
+
+        // remote '.main.js'
+        return findPath.slice(0, -8);
+	}
+
+	//----------------set breakpoints request ----------------------------------------------------------
+
+	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
+		this.log('bp', `setBreakPointsRequest: ${JSON.stringify(args.source)} ${JSON.stringify(args.breakpoints)}`);
+
+		let path = args.source.path;
+
+        // prefer the new API: array of breakpoints
+		// let lbs = args.breakpoints;
+		// if (args.breakpoints) {
+		// 	for (let b of lbs) {
+		// 		b.line = this.convertClientLineToDebugger(b.line);
+		// 	}
+		// }
+		// else {
+		// 	// deprecated API: convert line number array
+		// 	lbs = new Array<DebugProtocol.SourceBreakpoint>();
+		// 	for (let l of args.lines) {
+		// 		lbs.push({
+		// 			line: this.convertClientLineToDebugger(l),
+		// 			column: 0
+		// 		});
+		// 	}
+		// }
+		let lbs = args.breakpoints;
+		if (!lbs) {
+			// deprecated API: convert line number array
+			lbs = new Array<DebugProtocol.SourceBreakpoint>();
+			for (let l of args.lines) {
+				lbs.push({
+					line: l,
+					column: 0
+				});
+			}
+		}
+
+        // get source actor
+		let scriptPath = args.source.path;
+		let actor = this._getActor(scriptPath);
+		if (!actor) {
+			this.sendErrorResponse(response, 2012, 'no valid source specified', null, ErrorDestination.Telemetry);
+			return;
+		}
+
+        this._clearBreakpoints().then(() => {
+			return this._interruptThreadActor();
+		}).then(breakpointActor => {
+			return Promise.all(lbs.map(b => this._setBreakpoint(actor, b, scriptPath, breakpointActor)));
+		}).then(result => {
+			response.body = {
+				breakpoints: result
+			};
+			this.sendResponse(response);
+			this.log('bp', `_updateBreakpoints: result ${JSON.stringify(result)}`);
+
+			this._resumeThreadActor();
+		}).catch(e => {
+			this._sendCocosResponse(response, e);
+		});
+	}
+
+	private _getActor(path: string): string {
+		path = path.substring(this._prefixIndex);
+		return this._sourceActorMap[path];
+	}
+
+	private _interruptThreadActor(): Promise<string> {
+		let request = {
+			to: this._threadActor,
+			type: 'interrupt',
+			when: null
+		}
+		return this._cocos.command2(request).then(cocosRespond => {
+
+			if (!cocosRespond.success || cocosRespond.body.error) {
+				return Promise.reject('can not interrupe thread actor: ' + cocosRespond.message);
+			}
+			else {
+				return cocosRespond.body.actor;
+			}
+		}).catch(e => {
+			return Promise.reject('can not interrupt thread actor: ${e}');
+		})
+	}
+
+	private _clearBreakpoints(): Promise<void> {
+		let promises = [];
+		this._breakpointSourceActorMap.forEach( (actor, _) => {
+			promises.push(this._clearBreakpoint(actor));
+		});
+		this._breakpointSourceActorMap.clear();
+
+		return Promise.all(promises).then(() => {
+			return;
+		}).catch((e) => {
+			return;
+		});
+	}
+
+	private _clearBreakpoint(actor: string): Promise<void> {
+		let request = {
+			to: actor,
+			type: 'delete'
+		}
+		return this._cocos.command2(request).then(cocosResponse => {
+			if (cocosResponse.success) {
+				return;
+			}
+			else {
+				return Promise.reject('can not delete breakponit ' + actor);
+			}
+		}).catch(e => {
+			return Promise.reject(`can not delete breakponit ${actor}: ${e}`);
+		});
+	}
+
+    private _setBreakpoint(actor: string, b: DebugProtocol.SourceBreakpoint, scriptPath: string, breakpointActor: string): Promise<Breakpoint> {
+		let request = {
+			to: actor,
+			type: 'setBreakpoint',
+			location: {
+				line: b.line
+			}
+		}
+		return this._cocos.command2(request).then(cocosRespond => {
+			if (!cocosRespond.success) {
+				return new Breakpoint(false);
+			}
+
+			let actualLine = b.line;
+            if (cocosRespond.body.actualLocation && cocosRespond.body.actualLocation) {
+				actualLine = cocosRespond.body.actualLocation.line;
+			}
+			let breakpointId = scriptPath + b.line;
+			this._breakpointSourceActorMap.set(breakpointId, cocosRespond.body.actor);
+			return new Breakpoint(true, actualLine);
+		}).catch(cocosRespond => {
+			return new Breakpoint(false);
+		});
 	}
 
 	protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
@@ -141,7 +490,7 @@ class MockDebugSession extends DebugSession {
 		// return the default thread
 		response.body = {
 			threads: [
-				new Thread(MockDebugSession.THREAD_ID, "thread 1")
+				new Thread(CocosDebugSession.THREAD_ID, "thread 1")
 			]
 		};
 		this.sendResponse(response);
@@ -149,131 +498,36 @@ class MockDebugSession extends DebugSession {
 
 	protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
 
-		const frames = new Array<StackFrame>();
-		const words = this._sourceLines[this._currentLine].trim().split(/\s+/);
-		// create three fake stack frames.
-		for (let i= 0; i < 3; i++) {
-			// use a word of the line as the stackframe name
-			const name = words.length > i ? words[i] : "frame";
-			frames.push(new StackFrame(i, `${name}(${i})`, new Source(basename(this._sourceFile), this.convertDebuggerPathToClient(this._sourceFile)), this.convertDebuggerLineToClient(this._currentLine), 0));
-		}
-		response.body = {
-			stackFrames: frames
-		};
-		this.sendResponse(response);
+
 	}
 
 	protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): void {
 
-		const frameReference = args.frameId;
-		const scopes = new Array<Scope>();
-		scopes.push(new Scope("Local", this._variableHandles.create("local_" + frameReference), false));
-		scopes.push(new Scope("Closure", this._variableHandles.create("closure_" + frameReference), false));
-		scopes.push(new Scope("Global", this._variableHandles.create("global_" + frameReference), true));
 
-		response.body = {
-			scopes: scopes
-		};
-		this.sendResponse(response);
 	}
 
 	protected variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments): void {
 
-		const variables = [];
-		const id = this._variableHandles.get(args.variablesReference);
-		if (id != null) {
-			variables.push({
-				name: id + "_i",
-				value: "123",
-				variablesReference: 0
-			});
-			variables.push({
-				name: id + "_f",
-				value: "3.14",
-				variablesReference: 0
-			});
-			variables.push({
-				name: id + "_s",
-				value: "hello world",
-				variablesReference: 0
-			});
-			variables.push({
-				name: id + "_o",
-				value: "Object",
-				variablesReference: this._variableHandles.create("object_")
-			});
-		}
 
-		response.body = {
-			variables: variables
-		};
-		this.sendResponse(response);
 	}
 
 	protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments): void {
 
-		// find the breakpoints for the current source file
-		const breakpoints = this._breakPoints[this._sourceFile];
 
-		for (var ln = this._currentLine+1; ln < this._sourceLines.length; ln++) {
-
-			if (breakpoints) {
-				const bps = breakpoints.filter(bp => bp.line === this.convertDebuggerLineToClient(ln));
-				if (bps.length > 0) {
-					this._currentLine = ln;
-
-					// 'continue' request finished
-					this.sendResponse(response);
-
-					// send 'stopped' event
-					this.sendEvent(new StoppedEvent("breakpoint", MockDebugSession.THREAD_ID));
-
-					// the following shows the use of 'breakpoint' events to update properties of a breakpoint in the UI
-					// if breakpoint is not yet verified, verify it now and send a 'breakpoint' update event
-					if (!bps[0].verified) {
-						bps[0].verified = true;
-						this.sendEvent(new BreakpointEvent("update", bps[0]));
-					}
-					return;
-				}
-			}
-
-			// if word 'exception' found in source -> throw exception
-			if (this._sourceLines[ln].indexOf("exception") >= 0) {
-				this._currentLine = ln;
-				this.sendResponse(response);
-				this.sendEvent(new StoppedEvent("exception", MockDebugSession.THREAD_ID));
-				this.sendEvent(new OutputEvent(`exception in line: ${ln}\n`, 'stderr'));
-				return;
-			}
-		}
-		this.sendResponse(response);
-		// no more lines: run to end
-		this.sendEvent(new TerminatedEvent());
 	}
 
 	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
 
-		for (let ln = this._currentLine+1; ln < this._sourceLines.length; ln++) {
-			if (this._sourceLines[ln].trim().length > 0) {   // find next non-empty line
-				this._currentLine = ln;
-				this.sendResponse(response);
-				this.sendEvent(new StoppedEvent("step", MockDebugSession.THREAD_ID));
-				return;
-			}
-		}
-		this.sendResponse(response);
-		// no more lines: run to end
-		this.sendEvent(new TerminatedEvent());
+
 	}
 
 	protected evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): void {
-		response.body = {
-			result: `evaluate(${args.expression})`,
-			variablesReference: 0
-		};
-		this.sendResponse(response);
+
+	}
+
+	private _sendCocosResponse(response: DebugProtocol.Response, cocosResponse: string) {
+		this.sendErrorResponse(response, 2013, 'cocos request failed (reason: ${cocosResponse})', ErrorDestination.Telemetry);
 	}
 }
 
-DebugSession.run(MockDebugSession);
+DebugSession.run(CocosDebugSession);

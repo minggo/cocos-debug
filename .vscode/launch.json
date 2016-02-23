@@ -13,7 +13,7 @@
 			"outDir": "${workspaceRoot}/out"
 		},
 		{
-			"name": "mock-debug server",
+			"name": "cocos-debug server",
 			"type": "node",
 			"request": "launch",
 			"runtimeArgs": [ "--nolazy" ],
@@ -25,8 +25,8 @@
 			"cwd": "${workspaceRoot}"
 		},
 		{
-			"name": "mock test",
-			"type": "mock",
+			"name": "cocos test",
+			"type": "cocos",
 			"request": "launch",
 			"program": "${workspaceRoot}/README.md",
 			"stopOnEntry": true
