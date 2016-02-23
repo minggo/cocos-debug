@@ -1,22 +1,5 @@
 import * as EE from 'events';
 
-
-export class CocosFXResponse {
-	success: boolean;
-	message: string;
-	body: any;
-
-	constructor(message?: string) {
-		if (message) {
-			this.success = false;
-			this.message = message;
-		}
-		else {
-			this.success = true;
-		}
-	}
-}
-
 export class CocosFXEvent {
 	event: string;
 	reason: string;
@@ -54,34 +37,21 @@ export class CocosFXProtocol extends EE.EventEmitter {
 		inStream.resume();
 	}
 
-	public command(request: any, cb?: (response: CocosFXResponse) => void) : void {
-		this._command(request, CocosFXProtocol.TIMEOUT, cb);
+	public command(request: any, cb?: (result) => void) : void {
+		this._command(request, cb);
 	}
 
-	public command2(request: any, timeout: number = CocosFXProtocol.TIMEOUT) : Promise<CocosFXResponse> {
-		return new Promise((completeDispatch, errorDispatch) => {
-			this._command(request, timeout, (result: CocosFXResponse) => {
-				if (result.success) {
-					completeDispatch(result);
-				}
-				else {
-					errorDispatch(result);
-				}
+	public command2(request: any) : Promise<any> {
+		return new Promise((resolve, reject) => {
+			this._command(request, result => {
+				resolve(result);
 			});
 		});
 	}
 
-	private _command(request: any, timeout: number, cb: (response: CocosFXResponse) => void) : void {
-
-		// if (this._unresponsiveMode) {
-		// 	if (cb) {
-		// 		cb(new CocosFXResponse('cancelled because remote is unresponsive'));
-		// 	}
-		// 	return;
-		// }
+	private _command(request: any, cb: (result) => void) : void {
 
         if (cb) {
-			// this._pendingRequests[request.to] = cb;
 		    this._pendingRequests.push(cb);
 		}
 		else {
@@ -89,21 +59,6 @@ export class CocosFXProtocol extends EE.EventEmitter {
 		}
 
 		this.send(request);
-
-		// if (cb) {
-		// 	let sequence = this._sendSequence++;
-		// 	this._pendingRequests[sequence] = cb;
-		// 	setTimeout(() => {
-		// 		const clb = this._pendingRequests[sequence];
-		// 		if (clb) {
-		// 			delete this._pendingRequests[sequence];
-		// 			clb(new CocosFXResponse('timeout after ' + timeout + 'ms'));
-
-		// 			this._unresponsiveMode = true;
-		// 			this.emitEvent(new CocosFXEvent('diagnostic', 'unresponsive of ' + JSON.stringify(request)));
-		// 		}
-		// 	}, timeout);
-		// }
 	}
 
     private emitEvent(event: CocosFXEvent) {
@@ -123,14 +78,16 @@ export class CocosFXProtocol extends EE.EventEmitter {
 		this._rawData += data;
 		let packet;
         while(packet = this.extractPacket()) {
+			if (!packet) {
+				break;
+			}
+
 			try {
 				let body = JSON.parse(packet);
 
-				let cb = this._pendingRequests.shift();
+                let cb = this._pendingRequests.shift();
 				if (cb) {
-					let respond = new CocosFXResponse();
-					respond.body = body;
-					cb(respond);
+					cb(body);
 				}
 			} catch (e) {
 				// Can not parse the message from remote.
@@ -142,6 +99,7 @@ export class CocosFXProtocol extends EE.EventEmitter {
 	private extractPacket() {
 		let sep = this._rawData.indexOf(':');
 		if (sep < 0) {
+			// not enough data received
 			return;
 		}
 

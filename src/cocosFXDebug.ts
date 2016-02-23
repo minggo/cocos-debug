@@ -6,7 +6,7 @@ import {DebugProtocol} from 'vscode-debugprotocol';
 import * as net from 'net';
 import * as nls from 'vscode-nls';
 
-import {CocosFXProtocol, CocosFXEvent, CocosFXResponse} from './cocosFirefoxProtocol';
+import {CocosFXProtocol, CocosFXEvent} from './cocosFirefoxProtocol';
 
 export interface AttachRequestArguments {
 	// The debug port to attach to.
@@ -172,126 +172,97 @@ class CocosDebugSession extends DebugSession {
 	 */
 	private _initialize(respond: DebugProtocol.Response): void {
 
-		this._listTabs().then(cocosResponse => {
+		this._listTabs().then(tabActor => {
 			// listTabs request
-			return this._attachTab(cocosResponse.body);
-		}).then(cocosResponse => {
+			return this._attachTab(tabActor);
+		}).then(() => {
 			// attach thread actor
 			return this._attachThreadActor();
-		}).then(cocosRespond => {
+		}).then(() => {
 			// get sources
 			return this._getSources();
-		}).then(cocosRespond => {
+		}).then(() => {
 			// resume thread actor
 			return this._resumeThreadActor();
-		}).then(cocosRespond => {
+		}).then(() => {
 			// can set breakpoint now
 			this.sendEvent(new InitializedEvent());
 			this.sendResponse(respond);
-		}).catch(cocosResponse => {
-			console.error(cocosResponse.message);
+		}).catch(e => {
+			console.error(e);
+			this._sendCocosResponse(respond, e);
 		});
 	}
 
-	private _listTabs(): Promise<CocosFXResponse> {
+	private _listTabs(): Promise<string> {
 		let request = {
 			to: 'root',
 			"type": 'listTabs'
 		};
-		return this._cocos.command2(request).then(cocosRespond => {
-			if (!cocosRespond.success) {
-				return Promise.reject(cocosRespond);
+		return this._cocos.command2(request).then(result => {
+			if (result.error) {
+				return Promise.reject('error in listTabs: ' + result.error);
 			}
 
-			let body = cocosRespond.body;
-			if (body.error) {
-				return Promise.reject(new CocosFXResponse('error in listTabs' + body.message));
-			}
-
-			let selected = body.selected;
-			let selectedTab = body.tabs[selected];
-
-            let response = new CocosFXResponse();
-			response.body = selectedTab.actor;
-			return Promise.resolve(response);
-		}).catch(cocosRespond => {
-			return Promise.reject(cocosRespond);
+			let selected = result.selected;
+			let selectedTab = result.tabs[selected];
+			return selectedTab.actor;
+		}).catch(e => {
+			return Promise.reject(e);
 		});
 	}
 
-	private _attachTab(tabActor: string): Promise<CocosFXResponse> {
+	private _attachTab(tabActor: string): Promise<void> {
 		let request = {
 			to: tabActor,
 			type: "attach"
-		}
-		return this._cocos.command2(request).then(cocosRespond => {
-			if (!cocosRespond.success) {
-				return Promise.reject(cocosRespond);
+		};
+		return this._cocos.command2(request).then(result => {
+			if (result.error) {
+				return Promise.reject('error in attach tab: ' + result.error);
 			}
 
-			let body = cocosRespond.body;
-			if (body.type === 'tabAttached') {
-				this._threadActor = body.threadActor;
-				return Promise.resolve(new CocosFXResponse());
-			}
-			else {
-				return Promise.reject(new CocosFXResponse('error in attach tab'))
-			}
-		}).catch(cocosRespond => {
-			return Promise.reject(cocosRespond);
+			this._threadActor = result.threadActor;
+		}).catch(e => {
+			return Promise.reject(e);
 		});
 	}
 
-	private _attachThreadActor(): Promise<CocosFXResponse> {
+	private _attachThreadActor(): Promise<void> {
 		let request = {
 			to: this._threadActor,
 			type: 'attach',
 			useSourceMaps: true,
 			autoBlackBox: true
-		}
-		return this._cocos.command2(request).then(cocosRespond => {
-			if (!cocosRespond.success) {
-				return Promise.reject(cocosRespond);
+		};
+		return this._cocos.command2(request).then(result => {
+			if (result.error) {
+				return Promise.reject('error in attach thread actor: ' + result.error)
 			}
-
-			let body = cocosRespond.body;
-			if (body.why && body.why.type === 'attached'){
-				return Promise.resolve(new CocosFXResponse());
-			}
-			else {
-				return Promise.reject(new CocosFXResponse('error in attach thread actor'));
-			}
-		}).catch(cocosRespond => {
-			return Promise.reject(cocosRespond);
+		}).catch(e => {
+			return Promise.reject(e);
 		});
 	}
 
-    private _getSources(): Promise<CocosFXResponse> {
+    private _getSources(): Promise<void> {
 		const request = {
 			to: this._threadActor,
 			type: 'sources'
-		}
-		return this._cocos.command2(request).then(cocosRespond => {
-			if (!cocosRespond.success) {
-				return Promise.reject(cocosRespond);
+		};
+		return this._cocos.command2(request).then(result => {
+			if (result.error) {
+				return Promise.reject('error in resources request: ' + result.error);
 			}
 
-			const body = cocosRespond.body;
-			if (body.error) {
-				return Promise.reject(new CocosFXResponse('error in resources request'));
-			}
-
-            let sources = body.sources;
+            let sources = result.sources;
             let prefix = this._getRoot(sources);
 			let prefixLength = prefix.length;
 			for (let source of sources) {
 				let url = source.url.substring(prefixLength + 1);
 				this._sourceActorMap[url] = source.actor;
 			};
-
-			return Promise.resolve(new CocosFXResponse());
-		}).catch(cocosRespond => {
-			return Promise.reject(cocosRespond);
+		}).catch(e => {
+			return Promise.reject(e);
 		});
 	}
 
@@ -301,21 +272,13 @@ class CocosDebugSession extends DebugSession {
 			type: 'resume',
 			resumeLimit: null,
 			ignoreCaughtExceptions: true
-		}
-		return this._cocos.command2(request).then(cocosRespond => {
-			if (!cocosRespond.success) {
-				return Promise.reject(cocosRespond);
+		};
+		return this._cocos.command2(request).then(result => {
+			if (result.error) {
+				return Promise.reject('error in resume thread actor: ' + result.error);
 			}
-
-            const body = cocosRespond.body;
-			if (body.error) {
-				return Promise.reject(new CocosFXResponse('error in resume thread actor'));
-			}
-			else {
-				return Promise.resolve();
-			}
-		}).catch(cocosRespond => {
-			return Promise.reject(cocosRespond);
+		}).catch(e => {
+			return Promise.reject(e);
 		});
 	}
 
@@ -351,23 +314,6 @@ class CocosDebugSession extends DebugSession {
 
 		let path = args.source.path;
 
-        // prefer the new API: array of breakpoints
-		// let lbs = args.breakpoints;
-		// if (args.breakpoints) {
-		// 	for (let b of lbs) {
-		// 		b.line = this.convertClientLineToDebugger(b.line);
-		// 	}
-		// }
-		// else {
-		// 	// deprecated API: convert line number array
-		// 	lbs = new Array<DebugProtocol.SourceBreakpoint>();
-		// 	for (let l of args.lines) {
-		// 		lbs.push({
-		// 			line: this.convertClientLineToDebugger(l),
-		// 			column: 0
-		// 		});
-		// 	}
-		// }
 		let lbs = args.breakpoints;
 		if (!lbs) {
 			// deprecated API: convert line number array
@@ -415,17 +361,17 @@ class CocosDebugSession extends DebugSession {
 			to: this._threadActor,
 			type: 'interrupt',
 			when: null
-		}
-		return this._cocos.command2(request).then(cocosRespond => {
+		};
+		return this._cocos.command2(request).then(result => {
 
-			if (!cocosRespond.success || cocosRespond.body.error) {
-				return Promise.reject('can not interrupe thread actor: ' + cocosRespond.message);
+			if (result.error) {
+				return Promise.reject('can not interrupe thread actor: ' + result.error);
 			}
 			else {
-				return cocosRespond.body.actor;
+				return result.actor;
 			}
 		}).catch(e => {
-			return Promise.reject('can not interrupt thread actor: ${e}');
+			return Promise.reject(e);
 		})
 	}
 
@@ -447,16 +393,13 @@ class CocosDebugSession extends DebugSession {
 		let request = {
 			to: actor,
 			type: 'delete'
-		}
-		return this._cocos.command2(request).then(cocosResponse => {
-			if (cocosResponse.success) {
-				return;
-			}
-			else {
-				return Promise.reject('can not delete breakponit ' + actor);
+		};
+		return this._cocos.command2(request).then(result => {
+			if (result.error) {
+				return Promise.reject(`can not delete breakpoint ${actor}: ${result.error} `)
 			}
 		}).catch(e => {
-			return Promise.reject(`can not delete breakponit ${actor}: ${e}`);
+			return Promise.reject(e);
 		});
 	}
 
@@ -467,20 +410,20 @@ class CocosDebugSession extends DebugSession {
 			location: {
 				line: b.line
 			}
-		}
-		return this._cocos.command2(request).then(cocosRespond => {
-			if (!cocosRespond.success) {
+		};
+		return this._cocos.command2(request).then(result => {
+			if (result.error) {
 				return new Breakpoint(false);
 			}
 
 			let actualLine = b.line;
-            if (cocosRespond.body.actualLocation && cocosRespond.body.actualLocation) {
-				actualLine = cocosRespond.body.actualLocation.line;
+            if (result.actualLocation) {
+				actualLine = result.actualLocation.line;
 			}
 			let breakpointId = scriptPath + b.line;
-			this._breakpointSourceActorMap.set(breakpointId, cocosRespond.body.actor);
+			this._breakpointSourceActorMap.set(breakpointId, result.actor);
 			return new Breakpoint(true, actualLine);
-		}).catch(cocosRespond => {
+		}).catch(e => {
 			return new Breakpoint(false);
 		});
 	}
@@ -525,8 +468,8 @@ class CocosDebugSession extends DebugSession {
 
 	}
 
-	private _sendCocosResponse(response: DebugProtocol.Response, cocosResponse: string) {
-		this.sendErrorResponse(response, 2013, 'cocos request failed (reason: ${cocosResponse})', ErrorDestination.Telemetry);
+	private _sendCocosResponse(response: DebugProtocol.Response, message: string) {
+		this.sendErrorResponse(response, 2013, `cocos request failed (reason: ${message})`, ErrorDestination.Telemetry);
 	}
 }
 
