@@ -17,7 +17,7 @@
 			"type": "node",
 			"request": "launch",
 			"runtimeArgs": [ "--nolazy" ],
-			"program": "${workspaceRoot}/src/mockDebug.ts",
+			"program": "${workspaceRoot}/src/cocosFXDebug.ts",
 			"stopOnEntry": false,
 			"args": [ "--server=4711" ],
 			"sourceMaps": true,

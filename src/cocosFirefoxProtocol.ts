@@ -2,12 +2,12 @@ import * as EE from 'events';
 
 export class CocosFXEvent {
 	event: string;
-	reason: string;
+	body: any;
 
-	public constructor(event: string, reason?: string) {
+	public constructor(event: string, body?: any) {
 		this.event = event;
-		if (reason) {
-			this.reason = reason;
+		if (body) {
+			this.body = body;
 		}
 	}
 }
@@ -19,6 +19,9 @@ export class CocosFXProtocol extends EE.EventEmitter {
 	// first call back is null for response of root
 	private _pendingRequests = [null];
 	private _rawData = '';
+
+	private _bodyStartIndex: number = 0;
+	private _bodyLength: number = 0;
 
 	public startDispatch(inStream: NodeJS.ReadWriteStream, outStream: NodeJS.WritableStream): void {
 		this._writableStream = outStream;
@@ -78,16 +81,21 @@ export class CocosFXProtocol extends EE.EventEmitter {
 		this._rawData += data;
 		let packet;
         while(packet = this.extractPacket()) {
-			if (!packet) {
-				break;
-			}
 
 			try {
+				// should remove first cb event there is an error in parsing json data
+				let cb = this._pendingRequests.shift();
+
 				let body = JSON.parse(packet);
 
-                let cb = this._pendingRequests.shift();
-				if (cb) {
-					cb(body);
+				if (cb === undefined) {
+					// it is an event sent by remote
+					this.emitEvent(new CocosFXEvent('break', body));
+				}
+				else {
+					if (cb) {
+						cb(body);
+					}
 				}
 			} catch (e) {
 				// Can not parse the message from remote.
@@ -97,28 +105,44 @@ export class CocosFXProtocol extends EE.EventEmitter {
 	}
 
 	private extractPacket() {
-		let sep = this._rawData.indexOf(':');
-		if (sep < 0) {
-			// not enough data received
+
+        if (this._rawData === '') {
 			return;
 		}
 
-        let countString = this._rawData.substring(0, sep);
-		if (!/^[0-9]+$/.exec(countString)) {
-			this.emitEvent(new CocosFXEvent('error', 'received error packet: invalid length'));
-			return;
-        }
+		if (this._bodyStartIndex === 0) {
+			let sep = this._rawData.indexOf(':');
+			if (sep < 0) {
+				// not enough data received
+				return;
+			}
 
-        let count = parseInt(countString);
-		// should include ':'
-		let packet = this._rawData.slice(sep + 1, count + sep + 1);
-		if (packet.length < count){
-			// no enough data received
-			return;
+			this._bodyStartIndex = sep + 1;
 		}
-		let newPacketStart = sep + 1 + count;
-		this._rawData = this._rawData.slice(newPacketStart);
 
-        return packet;
+        if (this._bodyLength === 0) {
+			let countString = this._rawData.substring(0, this._bodyStartIndex - 1);
+			if (!/^[0-9]+$/.exec(countString)) {
+				this.emitEvent(new CocosFXEvent('error', 'received error packet: invalid length'));
+				return;
+			}
+
+			this._bodyLength = parseInt(countString);
+		}
+
+		// The body length is byte length
+		const resRawByteLength = Buffer.byteLength(this._rawData, 'utf8');
+		if (resRawByteLength - this._bodyStartIndex  >= this._bodyLength) {
+			const buf = new Buffer(resRawByteLength);
+			buf.write(this._rawData);
+
+			let packet = buf.slice(this._bodyStartIndex, this._bodyStartIndex + this._bodyLength).toString();
+			this._rawData = buf.slice(this._bodyStartIndex + this._bodyLength).toString();
+
+			this._bodyStartIndex = 0;
+			this._bodyLength = 0;
+
+			return packet;
+		}
 	}
 }
