@@ -878,18 +878,16 @@ class CocosDebugSession extends DebugSession {
 			resumeLimit: null,
 			ignoreCaughtExceptions: true
 		};
-		this._cocos.command2(request).then(result => {
+		this._cocos.command(request, (result) => {
 
             this._remotePaused = false;
             this.sendResponse(response);
 
-		}).catch(error => {
-			this.log('nr', 'error in continue request');
-		})
+		});
 
 	}
 
-    //-------------------- next request ----------------------------------------------------------
+    //-------------------- step request ----------------------------------------------------------
 
 	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
 
@@ -901,14 +899,51 @@ class CocosDebugSession extends DebugSession {
 			},
 			ignoreCaughtExceptions: true
 		};
-		this._cocos.command2(request).then(result => {
+		this._cocos.command(request, (result) => {
 
+			this._remotePaused = false;
             this.sendResponse(response);
 
-		}).catch(error => {
-			this.log('nr', 'error in next request');
-		})
+		});
 	}
+
+	protected stepInRequest(response: DebugProtocol.StepInResponse, args: DebugProtocol.StepInArguments) : void {
+
+		let request = {
+			to: this._threadActor,
+			type: 'resume',
+			resumeLimit: {
+				type: 'step'
+			},
+			ignoreCaughtExceptions: true
+		};
+		this._cocos.command(request, (result) => {
+
+			this._remotePaused = false;
+            this.sendResponse(response);
+
+		});
+	}
+
+	protected stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments) : void {
+
+		let request = {
+			to: this._threadActor,
+			type: 'resume',
+			resumeLimit: {
+				type: 'finish'
+			},
+			ignoreCaughtExceptions: true
+		};
+		this._cocos.command(request, (result) => {
+
+			this._remotePaused = false;
+            this.sendResponse(response);
+
+		});
+	}
+
+	//----------------- evaluate request -------------------------------------------------------------
 
 	protected evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): void {
 
