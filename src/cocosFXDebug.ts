@@ -243,13 +243,21 @@ class CocosDebugSession extends DebugSession {
 	/**
 	 * local engine root will be different in different modes
 	 * TODO: implement debug mode
-	 *  - cocos tests
-	 *  - cocos project
 	 *  - creator project
 	 */
 	private _getLocalEngineRoot(scriptRoot: string): string {
-		// TODO: now this is for cocos tests
-		return Path.join(scriptRoot, '../../cocos/scripting/js-bindings');
+
+		// cocos jstests?
+		let engineRoot = Path.join(scriptRoot, '../../cocos/scripting/js-bindings');
+		if (CocosDebugSession._dirExists(engineRoot)) {
+			return engineRoot;
+		}
+
+		// project created by cocos console?
+		engineRoot = Path.join(scriptRoot, 'frameworks/cocos2d-x/cocos/scripting/js-bindings');
+		if (CocosDebugSession._dirExists(engineRoot)) {
+			return engineRoot;
+		}
 	}
 
     /**
@@ -987,6 +995,16 @@ class CocosDebugSession extends DebugSession {
 	private _getRemoteScriptPath(remoteFullPath: string): string {
 		const remoteRootLength = this._remoteRoot.length;
 		return remoteFullPath.substring(remoteRootLength+1);
+	}
+
+	private static _dirExists(path: string): boolean {
+		try {
+			let stat = Fs.statSync(path);
+			return stat.isDirectory();
+		}
+        catch (error) {
+			return false;
+		}
 	}
 }
 
