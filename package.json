@@ -1,31 +1,22 @@
 {
-	"name": "mock-debug",
-	"displayName": "Mock Debug",
+	"name": "cocos-debug",
+	"displayName": "Cocos Debug",
 	"version": "0.10.18",
-	"publisher": "andreweinand",
-	"description": "Starter extension for developing debug adapters for VS Code.",
+	"publisher": "chukong technology",
+	"description": "Debugger for cocos JSB programs",
 	"author": {
-		"name": "Microsoft Corporation"
+		"name": "Chukong technology"
 	},
 	"engines": {
 		"vscode": "^0.10.1"
 	},
-	"icon": "images/mock-debug-icon.svg",
 	"categories": [
 		"Debuggers"
 	],
 	"private": true,
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/Microsoft/vscode-mock-debug.git"
-	},
-	"bugs": {
-		"url": "https://github.com/Microsoft/vscode-mock-debug/issues"
-	},
 	"dependencies": {
-		"vscode-debugprotocol": "~1.6.0-pre4",
-		"vscode-debugadapter": "~1.6.0-pre8",
-		"vscode-nls": "^1.0.2"
+		"vscode-debugadapter": "1.6.0-pre12",
+		"vscode-nls": "^1.0.4"
 	},
 	"devDependencies": {
 		"typescript": "^1.6.2",
@@ -33,39 +24,42 @@
 	},
 	"scripts": {
 		"prepublish": "tsc -p ./src",
-		"compile": "tsc -p ./src",
-		"watch": "tsc -w -p ./src",
-		"test": "node ./node_modules/mocha/bin/mocha -u tdd ./out/tests/"
+		"watch": "tsc -w -p ./src"
 	},
 	"contributes": {
 		"debuggers": [
 			{
 				"type": "cocos",
-				"label": "Cocos Debug",
-
+				"label": "Cocos-JSB",
 				"enableBreakpointsFor": { "languageIds": [ "javascript" ] },
-
-				"program": "./out/mockDebug.js",
+				"program": "./out/cocosFXDebug.js",
 				"runtime": "node",
-
 				"configurationAttributes": {
 					"attach": {
-						"required": [ "port" ],
 						"properties": {
 							"port": {
 								"type": "number",
-								"description": "The debug port to attach to.",
+								"description": "Debug port to attach to. Default is 5086.",
 								"default": 5086
+							},
+							"cwd": {
+								"type": "string",
+								"description": "Absolute path to the working directory of the program being debugged.",
+								"default": "${workspaceRoot}"
 							},
 							"address": {
 								"type": "string",
-								"description": "The TCP/IP address of the port (remote addresses only supported for node >= 5.0).",
+								"description": "The TCP/IP address of the port (remote addresses only supported for node >= 5.0). Default is 'localhost'.",
 								"default": "localhost"
+							},
+							"timeout": {
+								"type": "number",
+								"description": "Retry for this number of milliseconds to connect to the cocos JSB program. Default is 10000 ms.",
+								"default": 10000
 							}
 						}
 					}
 				},
-
 				"initialConfigurations": [
 					{
 						"name": "Cocos-Debug",
