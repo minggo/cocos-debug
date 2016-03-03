@@ -95,7 +95,8 @@ class CocosDebugSession extends DebugSession {
 	private _sourceActorMap = {};
 
 	private _frameHandles = new Handles<any>();
-	private _varialbeHandles = new Handles<Expandable>();
+	private _variableHandles = new Handles<Expandable>();
+	private _variableCache = new Map<string, Array<Variable>>();
 
 	public constructor() {
 
@@ -153,7 +154,8 @@ class CocosDebugSession extends DebugSession {
 
 		this.log('la', `_stopped: got ${reason} event from JSB`);
 		this._frameHandles.reset();
-		this._varialbeHandles.reset();
+		this._variableHandles.reset();
+		this._variableCache = new Map<string, Array<Variable>>();
 	}
 
 	/**
@@ -734,7 +736,7 @@ class CocosDebugSession extends DebugSession {
 			    expensive = false;
 			}
 
-			let s = new Scope(scopeName, this._varialbeHandles.create(new ScopeExpander(scope)), true);
+			let s = new Scope(scopeName, this._variableHandles.create(new ScopeExpander(scope)), true);
 			scopes.push(s);
 
             if (scope.environment) {
@@ -786,7 +788,7 @@ class CocosDebugSession extends DebugSession {
 	protected variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments): void {
 
         const reference = args.variablesReference;
-		const expander = this._varialbeHandles.get(reference);
+		const expander = this._variableHandles.get(reference);
 		if (expander) {
 			let variables = new Array<Variable>();
 			expander.expand(this, variables, () => {
@@ -814,7 +816,7 @@ class CocosDebugSession extends DebugSession {
 		// first scope, should add 'this' property
 		if (firstScope) {
 			let expanderThis = new PropertyExpander(scope.this.actor, 'this');
-			let varThis = new Variable('this', scope.this.class, this._varialbeHandles.create(expanderThis));
+			let varThis = new Variable('this', scope.this.class, this._variableHandles.create(expanderThis));
 			results.push(varThis);
 
 			type = scope.environment.type;
@@ -856,7 +858,7 @@ class CocosDebugSession extends DebugSession {
 		if (type) {
 			if (value.class) {
 				const expander = new PropertyExpander(<string>(value.actor), name);
-			    v = new Variable(name, value.class, this._varialbeHandles.create(expander));
+			    v = new Variable(name, value.class, this._variableHandles.create(expander));
 			}
 			else {
 				// null, undefined, NaN..., don't have class property
@@ -885,13 +887,19 @@ class CocosDebugSession extends DebugSession {
 			}
 		}
 
-		if (v) {
-			results.push(v);
-		}
-
+		results.push(v);
 	}
 
 	public _addPropertyVariables(expander: PropertyExpander, results: Array<Variable>, done: () => void): void {
+
+        // return cache value if exists
+		const cacheValue = this._variableCache.get(expander.actor);
+		if (cacheValue) {
+			results = cacheValue;
+			done();
+
+			return;
+		}
 
 		const request = {
 			to: expander.actor,
@@ -922,6 +930,9 @@ class CocosDebugSession extends DebugSession {
 			}
 
 			done();
+
+			// cache the result
+			this._variableCache.set(expander.actor, results);
 		}).catch(error => {
 			// ignore the error
 			this.log('vr' , `error in get property of ${expander.name}: ${error}`);
