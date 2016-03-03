@@ -11,6 +11,7 @@ import * as Fs from 'fs';
 import {CocosFXProtocol, CocosFXEvent} from './cocosFirefoxProtocol';
 
 export interface AttachRequestArguments {
+
 	// The debug port to attach to.
 	port: number;
 	// The file folder opened by VSCode
@@ -19,12 +20,6 @@ export interface AttachRequestArguments {
 	address?: string;
 	// Timeout to attach to remote.
 	timeout?: number;
-}
-
-enum ProjectType {
-	// The project is a cocos tests
-	TESTS,
-	JSB
 }
 
 interface Expandable {
@@ -62,6 +57,7 @@ class PropertyExpander implements Expandable {
 }
 
 class BreakpointInfo {
+
 	actor: string;
 	line: number;
 	column: number;
@@ -79,35 +75,30 @@ class CocosDebugSession extends DebugSession {
 
 	// we don't support multiple threads, so we can use a hardcoded ID for the default thread
 	private static THREAD_ID = 1;
-
 	private static ATTACH_TIMEOUT = 10000;
 
 	private _trace: boolean = true;
     private _cocos: CocosFXProtocol;
-	private _isTerminated: boolean = false;
 	private _localize: nls.LocalizeFunc = nls.loadMessageBundle();
-
-	private _sourceActorMap = {};
 	private _breakpoints = new Map<string, Array<BreakpointInfo>>();
-	private _threadActor: string;
-	private _remotePaused: boolean = false;
-
 	private _localRoot: string;
 	private _localEngineRoot: string;
 	private _localScriptStartIndex: number;
 	private _remoteRoot: string;
-	private _projectType: ProjectType = ProjectType.TESTS;
 	private _lastStoppedEvent;
+	private _inShutDown:boolean;
+	private _isTerminated: boolean;
+
+	private _threadActor: string;
+	private _remotePaused: boolean;
+	private _tabActor:string;
+	private _sourceActorMap = {};
 
 	private _frameHandles = new Handles<any>();
 	private _varialbeHandles = new Handles<Expandable>();
 
-	/**
-	 * Creates a new debug adapter.
-	 * We configure the default implementation of a debug adapter here
-	 * by specifying that this 'debugger' uses zero-based lines and columns.
-	 */
 	public constructor() {
+
 		super();
 
 		this.setDebuggerLinesStartAt1(true);
@@ -132,13 +123,10 @@ class CocosDebugSession extends DebugSession {
 			this._lastStoppedEvent = this._createStoppedEvent(event.body);
 			this.sendEvent(this._lastStoppedEvent);
 		})
-
-		// this debugger uses zero-based lines and columns
-		this.setDebuggerLinesStartAt1(false);
-		this.setDebuggerColumnsStartAt1(false);
 	}
 
 	public log(category: string, message: string): void {
+
 		if (this._trace) {
 			message = `${category}: ${message} \n`;
 			this.sendEvent(new OutputEvent(message));
@@ -149,6 +137,7 @@ class CocosDebugSession extends DebugSession {
 	 * The debug session has terminated
 	 */
 	private _termiated(reason: string): void {
+
 		this.log('ar', `_termiated: ${reason}`);
 
 		if (!this._isTerminated) {
@@ -161,6 +150,7 @@ class CocosDebugSession extends DebugSession {
 	 * clear every thing that is no longer valid after a new stopped event
 	 */
 	private _stopped(reason: string): void {
+
 		this.log('la', `_stopped: got ${reason} event from JSB`);
 		this._frameHandles.reset();
 		this._varialbeHandles.reset();
@@ -191,13 +181,13 @@ class CocosDebugSession extends DebugSession {
 
 	protected attachRequest(response: DebugProtocol.AttachResponse, args: AttachRequestArguments): void {
 
-		let address = args.address ? args.address : '127.0.0.1';
-		let timeout = args.timeout ? args.timeout : CocosDebugSession.ATTACH_TIMEOUT;
+		const address = args.address ? args.address : '127.0.0.1';
+		const timeout = args.timeout ? args.timeout : CocosDebugSession.ATTACH_TIMEOUT;
 
 		this.log('ar', `attachRequest: address: ${address} port: ${args.port}`);
 
 		let connected = false;
-        const socket: net.Socket = new net.Socket();
+        let socket: net.Socket = new net.Socket();
 		socket.connect(args.port, address);
 
 		socket.on('connect', (err: any) => {
@@ -265,8 +255,12 @@ class CocosDebugSession extends DebugSession {
 	 */
 	private _initialize(respond: DebugProtocol.Response): void {
 
+        // listTabs request
 		this._listTabs().then(tabActor => {
-			// listTabs request
+
+			this._tabActor = tabActor;
+
+			// attach tab
 			return this._attachTab(tabActor);
 		}).then(() => {
 			// attach thread actor
@@ -288,7 +282,8 @@ class CocosDebugSession extends DebugSession {
 	}
 
 	private _listTabs(): Promise<string> {
-		let request = {
+
+		const request = {
 			to: 'root',
 			"type": 'listTabs'
 		};
@@ -297,8 +292,7 @@ class CocosDebugSession extends DebugSession {
 				return Promise.reject('error in listTabs: ' + result.error);
 			}
 
-			let selected = result.selected;
-			let selectedTab = result.tabs[selected];
+			const selectedTab = result.tabs[result.selected];
 			return selectedTab.actor;
 		}).catch(e => {
 			return Promise.reject(e);
@@ -306,7 +300,8 @@ class CocosDebugSession extends DebugSession {
 	}
 
 	private _attachTab(tabActor: string): Promise<void> {
-		let request = {
+
+		const request = {
 			to: tabActor,
 			type: "attach"
 		};
@@ -322,7 +317,8 @@ class CocosDebugSession extends DebugSession {
 	}
 
 	private _attachThreadActor(): Promise<void> {
-		let request = {
+
+		const request = {
 			to: this._threadActor,
 			type: 'attach',
 			useSourceMaps: true,
@@ -338,6 +334,7 @@ class CocosDebugSession extends DebugSession {
 	}
 
     private _getSources(): Promise<void> {
+
 		const request = {
 			to: this._threadActor,
 			type: 'sources'
@@ -347,9 +344,9 @@ class CocosDebugSession extends DebugSession {
 				return Promise.reject('error in resources request: ' + result.error);
 			}
 
-            let sources = result.sources;
+            const sources = result.sources;
             this._remoteRoot = this._getRemoteRoot(sources);
-			for (let source of sources) {
+			for (const source of sources) {
 				let url = this._getRemoteScriptPath(source.url);
 				this._sourceActorMap[url] = source.actor;
 			};
@@ -359,7 +356,8 @@ class CocosDebugSession extends DebugSession {
 	}
 
 	private _resumeThreadActor(): Promise<void> {
-		let request = {
+
+		const request = {
 			to: this._threadActor,
 			type: 'resume',
 			resumeLimit: null,
@@ -380,6 +378,7 @@ class CocosDebugSession extends DebugSession {
 	 * We use the 'main.js' the get the root path.
 	 */
 	private _getRemoteRoot(sources: any): string {
+
 		let length = Number.MAX_VALUE;
 		let findPath = '';
 		for (let source of sources) {
@@ -400,15 +399,41 @@ class CocosDebugSession extends DebugSession {
         return findPath.slice(0, -8);
 	}
 
-	//----------------set breakpoints request ----------------------------------------------------------
+	//---------------- disconnect request -------------------------------------------------------------
+
+	protected disconnectRequest(response: DebugProtocol.DisconnectResponse, args: DebugProtocol.DisconnectArguments): void {
+
+		super.disconnectRequest(response, args);
+	}
+
+	public shutdown(): void {
+
+		if (!this._inShutDown) {
+			this._inShutDown = true;
+
+			// detach tab actor
+			let request = {
+				to: this._tabActor,
+				type: 'detach'
+			};
+			this._cocos.command(request);
+
+			// TODO: stop listers to web console if we support web console
+
+			super.shutdown();
+		}
+	}
+
+	//---------------- set breakpoints request ----------------------------------------------------------
 
 	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
+
 		this.log('bp', `setBreakPointsRequest: ${JSON.stringify(args.source)} ${JSON.stringify(args.breakpoints)}`);
 
-		let path = args.source.path;
+		const path = args.source.path;
 
 		// get source actor
-		let actor = this._getActor(path);
+		const actor = this._getActor(path);
 		if (!actor) {
 			this.sendErrorResponse(response, 2012, 'no valid source specified', null, ErrorDestination.Telemetry);
 			return;
@@ -447,7 +472,7 @@ class CocosDebugSession extends DebugSession {
 		this._breakpoints[path] = tmpBps;
 
         let needToResume = false;
-		let needSetBreakpoint = lbs.length !== lbsAlreadSet.length;
+		const needSetBreakpoint = lbs.length !== lbsAlreadSet.length;
         this._clearBreakpoints(bps).then(() => {
 
             // remote should be in paused to set breakpoint
@@ -491,7 +516,8 @@ class CocosDebugSession extends DebugSession {
 	}
 
 	private _interruptThreadActor(): Promise<string> {
-		let request = {
+
+		const request = {
 			to: this._threadActor,
 			type: 'interrupt',
 			when: null
@@ -512,6 +538,7 @@ class CocosDebugSession extends DebugSession {
 	}
 
 	private _clearBreakpoints(breakpointsToDelete: Array<BreakpointInfo>): Promise<void> {
+
 		let promises = [];
 		for (let bp of breakpointsToDelete) {
 			promises.push(this._clearBreakpoint(bp));
@@ -525,8 +552,9 @@ class CocosDebugSession extends DebugSession {
 	}
 
 	private _clearBreakpoint(breakpointActorInfo: BreakpointInfo): Promise<void> {
-		let actor = breakpointActorInfo.actor;
-		let request = {
+
+		const actor = breakpointActorInfo.actor;
+		const request = {
 			to: actor,
 			type: 'delete'
 		};
@@ -540,7 +568,8 @@ class CocosDebugSession extends DebugSession {
 	}
 
     private _setBreakpoint(actor: string, b: DebugProtocol.SourceBreakpoint, scriptPath: string): Promise<Breakpoint> {
-		let request = {
+
+		const request = {
 			to: actor,
 			type: 'setBreakpoint',
 			location: {
@@ -583,14 +612,14 @@ class CocosDebugSession extends DebugSession {
 	protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
 
 		const threadReference = args.threadId;
-		let maxLevels = args.levels;
+		const maxLevels = args.levels;
 
 		if (threadReference !== CocosDebugSession.THREAD_ID) {
 			this.sendErrorResponse(response, 2014, 'unexpected thread reference {_thread}', { _thread: threadReference }, ErrorDestination.Telemetry);
 			return;
 		}
 
-		let request = {
+		const request = {
 			to: this._threadActor,
 			type: 'frames',
 			start: 0,
@@ -602,13 +631,13 @@ class CocosDebugSession extends DebugSession {
 				return Promise.reject('can not get stacktraces: ' + backtraceResponse.error);
 			}
 
-			let responseFrames = backtraceResponse.frames;
-
-			const frames = new Array<StackFrame>();
+			const responseFrames = backtraceResponse.frames;
+			const frames = new Array<Promise<StackFrame>>();
 			for (let frame of responseFrames) {
 				frames.push(this._createStackFrame(frame));
 			}
-			return frames;
+
+			return Promise.all(frames);
 
 		}).then(stackframes => {
 
@@ -627,21 +656,44 @@ class CocosDebugSession extends DebugSession {
 		});
 	}
 
-	private _createStackFrame(frame: any): StackFrame {
+	private _createStackFrame(frame: any): Promise<StackFrame> {
 
 		const line = frame.where.line;
 		const column = frame.where.column;
-		// TODO: get function name if possible
-		const functionName = this._localize('anonymous.function', "(anonymous function)");
 		const frameRefrence = this._frameHandles.create(frame);
 
-		const localPath = this._getLocalPath(frame.source.url);
+		let localPath = this._getLocalPath(frame.source.url);
 		const source = new Source(Path.basename(localPath), localPath);
 
-        return new StackFrame(frameRefrence, functionName, source, line, column);
+        if (frame.type === 'call') {
+			return this._getFrameName(frame.callee.actor).then(functionName => {
+
+				functionName = functionName || 'anonymous function';
+				return new StackFrame(frameRefrence, functionName, source, line, column);
+			});
+		}
+		else {
+			return Promise.resolve(new StackFrame(frameRefrence, 'anonymous function', source, line, column));
+		}
+	}
+
+	private _getFrameName(actor: string): Promise<string> {
+
+		const request = {
+			to: actor,
+			type: 'name'
+		};
+		return this._cocos.command2(request).then(result => {
+			if (result.error || !result.name) {
+				return null;
+			}
+
+			return result.name;
+		});
 	}
 
 	private _getLocalPath(remotePath: string): string {
+
 		const remoteScriptPath = this._getRemoteScriptPath(remotePath);
 		const pathCompoents = remoteScriptPath.split('/');
 
@@ -682,7 +734,7 @@ class CocosDebugSession extends DebugSession {
 			    expensive = false;
 			}
 
-			let s = new Scope(scopeName, this._varialbeHandles.create(new ScopeExpander(scope)), expensive);
+			let s = new Scope(scopeName, this._varialbeHandles.create(new ScopeExpander(scope)), true);
 			scopes.push(s);
 
             if (scope.environment) {
@@ -736,12 +788,13 @@ class CocosDebugSession extends DebugSession {
         const reference = args.variablesReference;
 		const expander = this._varialbeHandles.get(reference);
 		if (expander) {
-			const variables = new Array<Variable>();
+			let variables = new Array<Variable>();
 			expander.expand(this, variables, () => {
-				// TODO: sort variables
+
 				response.body = {
 					variables: variables
 				};
+
 				this.sendResponse(response);
 			});
 		}
@@ -755,7 +808,7 @@ class CocosDebugSession extends DebugSession {
 
 	public _addScopeVariables(scope: any, results: Array<Variable>, done: () => void): void {
 
-		let firstScope = (scope.environment !== undefined);
+		const firstScope = (scope.environment !== undefined);
 		let type = scope.type;
 
 		// first scope, should add 'this' property
@@ -782,7 +835,6 @@ class CocosDebugSession extends DebugSession {
 				done();
 				break;
 
-            // TODO: what to do for these types?
 			case 'object':
 			case 'with':
 			    let expanderObj = new PropertyExpander(scope.object.actor, '');
@@ -798,15 +850,17 @@ class CocosDebugSession extends DebugSession {
 	}
 
 	private _addVariableFromValue(results: Array<Variable>, name:string, value: any): void {
+
 		const type = value.type;
 		let v: Variable;
 		if (type) {
-			if (type === 'null' || type === 'undefined') {
-				v = new Variable(name, type);
+			if (value.class) {
+				const expander = new PropertyExpander(<string>(value.actor), name);
+			    v = new Variable(name, value.class, this._varialbeHandles.create(expander));
 			}
 			else {
-				let expander = new PropertyExpander(<string>(value.actor), name);
-			    v = new Variable(name, value.class, this._varialbeHandles.create(expander));
+				// null, undefined, NaN..., don't have class property
+				v = new Variable(name, type);
 			}
 		}
 		else {
@@ -814,11 +868,10 @@ class CocosDebugSession extends DebugSession {
 			switch (dataType) {
 				case 'string':
 				    if (value !== '') {
-
 						value = value.replace('\n', '\\n').replace('\r', '\\r');
-						// need to wrap it with ""
-				        v = new Variable(name, ('"' + value + '"'));
 					}
+					// need to wrap it with ""
+					v = new Variable(name, ('"' + value + '"'));
 				    break;
 				case 'boolean':
 				case 'number':
@@ -831,25 +884,25 @@ class CocosDebugSession extends DebugSession {
 				    break;
 			}
 		}
-		results.push(v);
+
+		if (v) {
+			results.push(v);
+		}
+
 	}
 
 	public _addPropertyVariables(expander: PropertyExpander, results: Array<Variable>, done: () => void): void {
-		let request = {
+
+		const request = {
 			to: expander.actor,
 			type: 'prototypeAndProperties'
 		};
 		this._cocos.command2(request).then(response => {
+
 			if (response.error) {
 				this.log('vr' ,`error in get property of ${expander.name}: ${response.error}`);
 				done();
 				return;
-			}
-
-            // prototype
-			// if it is named _proto_, then it can not be shown, so change to _prototype_
-			if (response.prototype) {
-				this._addVariableFromValue(results, '_prototype_', response.prototype);
 			}
 
 			// own properties
@@ -860,8 +913,8 @@ class CocosDebugSession extends DebugSession {
 				}
 			}
 
-			// safeGetterValues
-			let safeGetterValues = response.safeGetterValues;
+			// // safeGetterValues
+			const safeGetterValues = response.safeGetterValues;
 			if (safeGetterValues) {
 				for (let propName in safeGetterValues) {
 					this._addVariableFromValue(results, propName, safeGetterValues[propName].getterValue);
@@ -876,11 +929,23 @@ class CocosDebugSession extends DebugSession {
 		});
 	}
 
+	// ---------------- pause request ----------------------------------------------------------------
+
+	protected pauseRequest(response: DebugProtocol.PauseResponse, args: DebugProtocol.PauseArguments) : void {
+
+		this._interruptThreadActor().then(()=> {
+			this._stopped('pause');
+			this._lastStoppedEvent = new StoppedEvent(this._localize('reason.user.request', 'user request'), CocosDebugSession.THREAD_ID);
+			this.sendResponse(response);
+			this.sendEvent(this._lastStoppedEvent);
+		});
+	}
+
 	//-------------------- continue request -----------------------------------------------------
 
 	protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments): void {
 
-		let request = {
+		const request = {
 			to: this._threadActor,
 			type: 'resume',
 			resumeLimit: null,
@@ -899,7 +964,7 @@ class CocosDebugSession extends DebugSession {
 
 	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
 
-		let request = {
+		const request = {
 			to: this._threadActor,
 			type: 'resume',
 			resumeLimit: {
@@ -917,7 +982,7 @@ class CocosDebugSession extends DebugSession {
 
 	protected stepInRequest(response: DebugProtocol.StepInResponse, args: DebugProtocol.StepInArguments) : void {
 
-		let request = {
+		const request = {
 			to: this._threadActor,
 			type: 'resume',
 			resumeLimit: {
@@ -935,7 +1000,7 @@ class CocosDebugSession extends DebugSession {
 
 	protected stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments) : void {
 
-		let request = {
+		const request = {
 			to: this._threadActor,
 			type: 'resume',
 			resumeLimit: {
