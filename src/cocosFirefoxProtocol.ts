@@ -17,9 +17,9 @@ export class CocosFXEvent {
  * state the actor is in after each message.
  */
 export const ThreadStateTypes = {
-  "paused": "paused",
-  "resumed": "attached",
-  "detached": "detached"
+  'paused': 'paused',
+  'resumed': 'attached',
+  'detached': 'detached'
 };
 
 /**
@@ -27,30 +27,30 @@ export const ThreadStateTypes = {
  * by the client.
  */
 export const UnsolicitedNotifications = {
-  "consoleAPICall": "consoleAPICall",
-  "eventNotification": "eventNotification",
-  "fileActivity": "fileActivity",
-  "lastPrivateContextExited": "lastPrivateContextExited",
-  "logMessage": "logMessage",
-  "networkEvent": "networkEvent",
-  "networkEventUpdate": "networkEventUpdate",
-  "newGlobal": "newGlobal",
-  "newScript": "newScript",
-  "tabDetached": "tabDetached",
-  "tabListChanged": "tabListChanged",
-  "reflowActivity": "reflowActivity",
-  "addonListChanged": "addonListChanged",
-  "tabNavigated": "tabNavigated",
-  "frameUpdate": "frameUpdate",
-  "pageError": "pageError",
-  "documentLoad": "documentLoad",
-  "enteredFrame": "enteredFrame",
-  "exitedFrame": "exitedFrame",
-  "appOpen": "appOpen",
-  "appClose": "appClose",
-  "appInstall": "appInstall",
-  "appUninstall": "appUninstall",
-  "evaluationResult": "evaluationResult",
+  'consoleAPICall': 'consoleAPICall',
+  'eventNotification': 'eventNotification',
+  'fileActivity': 'fileActivity',
+  'lastPrivateContextExited': 'lastPrivateContextExited',
+  'logMessage': 'logMessage',
+  'networkEvent': 'networkEvent',
+  'networkEventUpdate': 'networkEventUpdate',
+  'newGlobal': 'newGlobal',
+  'newScript': 'newScript',
+  'tabDetached': 'tabDetached',
+  'tabListChanged': 'tabListChanged',
+  'reflowActivity': 'reflowActivity',
+  'addonListChanged': 'addonListChanged',
+  'tabNavigated': 'tabNavigated',
+  'frameUpdate': 'frameUpdate',
+  'pageError': 'pageError',
+  'documentLoad': 'documentLoad',
+  'enteredFrame': 'enteredFrame',
+  'exitedFrame': 'exitedFrame',
+  'appOpen': 'appOpen',
+  'appClose': 'appClose',
+  'appInstall': 'appInstall',
+  'appUninstall': 'appUninstall',
+  'evaluationResult': 'evaluationResult'
 };
 
 /**
@@ -58,12 +58,12 @@ export const UnsolicitedNotifications = {
  * response to a client request.
  */
 export const UnsolicitedPauses = {
-  "resumeLimit": "resumeLimit",
-  "debuggerStatement": "debuggerStatement",
-  "breakpoint": "breakpoint",
-  "DOMEvent": "DOMEvent",
-  "watchpoint": "watchpoint",
-  "exception": "exception"
+  'resumeLimit': 'resumeLimit',
+  'debuggerStatement': 'debuggerStatement',
+  'breakpoint': 'breakpoint',
+  'DOMEvent': 'DOMEvent',
+  'watchpoint': 'watchpoint',
+  'exception': 'exception'
 };
 
 export class CocosFXProtocol extends EE.EventEmitter {
