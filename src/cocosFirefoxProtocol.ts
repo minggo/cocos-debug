@@ -12,8 +12,61 @@ export class CocosFXEvent {
 	}
 }
 
+/**
+ * Set of protocol messages that affect thread state, and the
+ * state the actor is in after each message.
+ */
+export const ThreadStateTypes = {
+  "paused": "paused",
+  "resumed": "attached",
+  "detached": "detached"
+};
+
+/**
+ * Set of protocol messages that are sent by the server without a prior request
+ * by the client.
+ */
+export const UnsolicitedNotifications = {
+  "consoleAPICall": "consoleAPICall",
+  "eventNotification": "eventNotification",
+  "fileActivity": "fileActivity",
+  "lastPrivateContextExited": "lastPrivateContextExited",
+  "logMessage": "logMessage",
+  "networkEvent": "networkEvent",
+  "networkEventUpdate": "networkEventUpdate",
+  "newGlobal": "newGlobal",
+  "newScript": "newScript",
+  "tabDetached": "tabDetached",
+  "tabListChanged": "tabListChanged",
+  "reflowActivity": "reflowActivity",
+  "addonListChanged": "addonListChanged",
+  "tabNavigated": "tabNavigated",
+  "frameUpdate": "frameUpdate",
+  "pageError": "pageError",
+  "documentLoad": "documentLoad",
+  "enteredFrame": "enteredFrame",
+  "exitedFrame": "exitedFrame",
+  "appOpen": "appOpen",
+  "appClose": "appClose",
+  "appInstall": "appInstall",
+  "appUninstall": "appUninstall",
+  "evaluationResult": "evaluationResult",
+};
+
+/**
+ * Set of pause types that are sent by the server and not as an immediate
+ * response to a client request.
+ */
+export const UnsolicitedPauses = {
+  "resumeLimit": "resumeLimit",
+  "debuggerStatement": "debuggerStatement",
+  "breakpoint": "breakpoint",
+  "DOMEvent": "DOMEvent",
+  "watchpoint": "watchpoint",
+  "exception": "exception"
+};
+
 export class CocosFXProtocol extends EE.EventEmitter {
-	private static TIMEOUT = 3000;
 
     private _writableStream: NodeJS.WritableStream;
 	// first call back is null for response of root
@@ -52,6 +105,13 @@ export class CocosFXProtocol extends EE.EventEmitter {
 		});
 	}
 
+    /**
+	 * This command doesn't send any request, it just to skip one packet received.
+	 */
+	public dummyCommand() {
+		this._pendingRequests.push(null);
+	}
+
 	private _command(request: any, cb: (result) => void) : void {
 
         if (cb) {
@@ -83,20 +143,25 @@ export class CocosFXProtocol extends EE.EventEmitter {
         while(packet = this.extractPacket()) {
 
 			try {
-				// should remove first cb event there is an error in parsing json data
-				let cb = this._pendingRequests.shift();
 
 				let body = JSON.parse(packet);
 
-				if (cb === undefined) {
-					// it is an event sent by remote
-					this.emitEvent(new CocosFXEvent('break', body));
+                let cb;
+				if (!(body.type in UnsolicitedNotifications) &&
+				    !(body.type === ThreadStateTypes.paused &&
+					  body.why.type in UnsolicitedPauses)) {
+
+					cb = this._pendingRequests.shift();
 				}
-				else {
-					if (cb) {
-						cb(body);
-					}
+
+				if (body.type in ThreadStateTypes) {
+					this.emitEvent(new CocosFXEvent('threadState', body));
 				}
+
+				if (cb) {
+					cb(body);
+				}
+
 			} catch (e) {
 				// Can not parse the message from remote.
 				this.emitEvent(new CocosFXEvent('error', 'received error packet: invalid content: ' + data));

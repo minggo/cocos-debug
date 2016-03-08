@@ -1,6 +1,6 @@
 
 import {DebugSession, InitializedEvent, TerminatedEvent, StoppedEvent, BreakpointEvent, OutputEvent,
-	Thread, StackFrame, Scope, Source, Handles, Breakpoint, ErrorDestination, Variable} from 'vscode-debugadapter';
+	    Thread, StackFrame, Scope, Source, Handles, Breakpoint, ErrorDestination, Variable} from 'vscode-debugadapter';
 import {DebugProtocol} from 'vscode-debugprotocol';
 import * as net from 'net';
 import * as nls from 'vscode-nls';
@@ -8,7 +8,7 @@ import * as nls from 'vscode-nls';
 import * as Path from 'path';
 import * as Fs from 'fs';
 
-import {CocosFXProtocol, CocosFXEvent} from './cocosFirefoxProtocol';
+import {CocosFXProtocol, CocosFXEvent, ThreadStateTypes, UnsolicitedPauses} from './cocosFirefoxProtocol';
 
 export interface AttachRequestArguments {
 
@@ -119,11 +119,22 @@ class CocosDebugSession extends DebugSession {
 			console.error(event.body);
 		});
 
-		this._cocos.on('break', (event: CocosFXEvent) => {
-			this._stopped('break');
-			this._lastStoppedEvent = this._createStoppedEvent(event.body);
-			this.sendEvent(this._lastStoppedEvent);
-		})
+		this._cocos.on('threadState', (event: CocosFXEvent) => {
+
+			this._remotePaused = (event.body.type === ThreadStateTypes.paused);
+
+            if (this._remotePaused) {
+
+				let stopEvent = this._createStoppedEvent(event.body);
+				if (stopEvent) {
+
+					this._stopped('threadState');
+
+					this._lastStoppedEvent = stopEvent;
+					this.sendEvent(this._lastStoppedEvent);
+				}
+			}
+		});
 	}
 
 	public log(category: string, message: string): void {
@@ -369,7 +380,6 @@ class CocosDebugSession extends DebugSession {
 			if (result.error) {
 				return Promise.reject('error in resume thread actor: ' + result.error);
 			}
-			this._remotePaused = false;
 		}).catch(e => {
 			return Promise.reject(e);
 		});
@@ -530,7 +540,6 @@ class CocosDebugSession extends DebugSession {
 				return Promise.reject('can not interrupe thread actor: ' + result.error);
 			}
 			else {
-				this._remotePaused = true;
 				return result.actor;
 			}
 
@@ -607,6 +616,10 @@ class CocosDebugSession extends DebugSession {
 			]
 		};
 		this.sendResponse(response);
+	}
+
+	protected setFunctionBreakPointsRequest(response: DebugProtocol.SetFunctionBreakpointsResponse, args: DebugProtocol.SetFunctionBreakpointsArguments): void {
+		console.log('setFunctionBreakPointsRequest');
 	}
 
 	//----------- statcktrace request ------------------------------------------------------
@@ -832,7 +845,8 @@ class CocosDebugSession extends DebugSession {
 			    const variables = scope.bindings.variables;
 				for (const key in variables) {
 				    const value = variables[key];
-                    this._addVariableFromValue(results, key, value.value);
+					let variable = this._createVariableFromValue(key, value.value);
+					results.push(variable);
 				}
 				done();
 				break;
@@ -851,7 +865,7 @@ class CocosDebugSession extends DebugSession {
 		}
 	}
 
-	private _addVariableFromValue(results: Array<Variable>, name:string, value: any): void {
+	private _createVariableFromValue(name:string, value: any): Variable {
 
 		const type = value.type;
 		let v: Variable;
@@ -887,7 +901,7 @@ class CocosDebugSession extends DebugSession {
 			}
 		}
 
-		results.push(v);
+		return v;
 	}
 
 	public _addPropertyVariables(expander: PropertyExpander, results: Array<Variable>, done: () => void): void {
@@ -917,7 +931,8 @@ class CocosDebugSession extends DebugSession {
 			let ownProperties = response.ownProperties;
 			if (ownProperties) {
 				for (let propName in ownProperties) {
-					this._addVariableFromValue(results, propName, ownProperties[propName].value);
+					let variable = this._createVariableFromValue(propName, ownProperties[propName].value);
+					results.push(variable);
 				}
 			}
 
@@ -925,7 +940,8 @@ class CocosDebugSession extends DebugSession {
 			const safeGetterValues = response.safeGetterValues;
 			if (safeGetterValues) {
 				for (let propName in safeGetterValues) {
-					this._addVariableFromValue(results, propName, safeGetterValues[propName].getterValue);
+					let variable = this._createVariableFromValue(propName, safeGetterValues[propName].getterValue);
+					results.push(variable);
 				}
 			}
 
@@ -964,7 +980,6 @@ class CocosDebugSession extends DebugSession {
 		};
 		this._cocos.command(request, (result) => {
 
-            this._remotePaused = false;
             this.sendResponse(response);
 
 		});
@@ -985,7 +1000,6 @@ class CocosDebugSession extends DebugSession {
 		};
 		this._cocos.command(request, (result) => {
 
-			this._remotePaused = false;
             this.sendResponse(response);
 
 		});
@@ -1003,7 +1017,6 @@ class CocosDebugSession extends DebugSession {
 		};
 		this._cocos.command(request, (result) => {
 
-			this._remotePaused = false;
             this.sendResponse(response);
 
 		});
@@ -1021,7 +1034,6 @@ class CocosDebugSession extends DebugSession {
 		};
 		this._cocos.command(request, (result) => {
 
-			this._remotePaused = false;
             this.sendResponse(response);
 
 		});
@@ -1031,7 +1043,58 @@ class CocosDebugSession extends DebugSession {
 
 	protected evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): void {
 
+	    const expression = args.expression;
+
+		if (args.frameId <= 0) {
+			this.sendErrorResponse(response, 2020, 'stack frame not valid', null, ErrorDestination.Telemetry);
+			return;
+		}
+
+		const frame = this._frameHandles.get(args.frameId);
+		if (!frame) {
+			this.sendErrorResponse(response, 2020, 'stack frame not valid', null, ErrorDestination.Telemetry);
+			return;
+		}
+
+		const request = {
+			to: this._threadActor,
+			type: 'clientEvaluate',
+			frame: frame.actor,
+			expression: this._createEvaluateExpression(expression)
+		};
+
+		// should skip first reply
+		this._cocos.dummyCommand();
+
+		this._cocos.command2(request).then(evalResponse => {
+			if (evalResponse.error) {
+				response.success = false;
+				response.message = evalResponse.error;
+			}
+			else {
+				let frameFinished = evalResponse.why.frameFinished;
+				if (frameFinished.throw || frameFinished.terminated) {
+					response.success = false;
+				    response.message = this._localize('eval.not.available', "not available");
+				}
+				else {
+					let v = this._createVariableFromValue('evaluate', frameFinished.return);
+					response.body = {
+						result: v.value,
+						variablesReference: v.variablesReference
+					};
+				}
+			}
+
+			this.sendResponse(response);
+		});
 	}
+
+	private _createEvaluateExpression(expression: string): string {
+		return `eval(\"try {${expression}\" + '\\n' + \"} catch (e) {e.name + ': ' + e.message;}\")`;
+	}
+
+	//--------- private functions ------------------------------------------------
 
 	private _sendCocosResponse(response: DebugProtocol.Response, message: string) {
 		this.sendErrorResponse(response, 2013, `cocos request failed (reason: ${message})`, ErrorDestination.Telemetry);
@@ -1041,27 +1104,24 @@ class CocosDebugSession extends DebugSession {
 
 		let reason: string;
 
-		if (body.type === 'paused') {
-			this._remotePaused = true;
+		switch (body.why.type) {
+			case UnsolicitedPauses.breakpoint:
+				reason = this._localize('reason.breakpoint', 'breakpoint');
+				break;
+			case UnsolicitedPauses.resumeLimit:
+				// step over, step into, step out
+				reason = this._localize('reason.step', 'step');
+				break;
 
-			switch (body.why.type) {
-				case 'breakpoint':
-                    reason = this._localize('reason.breakpoint', 'breakpoint');
-					break;
-				case 'resumeLimit':
-				    // step over, step into, step out
-					reason = this._localize('reason.step', 'step');
-				    break;
+			default:
+				break;
+		}
 
-				default:
-				    this.log('la', 'unkonw paused event: ' + body.why.type);
-					break;
-			}
-
+        if (reason) {
 			return new StoppedEvent(reason, CocosDebugSession.THREAD_ID);
 		}
 		else {
-			this.log('la', 'unkonw stop event: ' + body.type);
+			return null;
 		}
 	}
 
