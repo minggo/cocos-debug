@@ -77,7 +77,7 @@ class CocosDebugSession extends DebugSession {
 	private static THREAD_ID = 1;
 	private static ATTACH_TIMEOUT = 10000;
 
-	private _trace: boolean = true;
+	private _trace: boolean = false;
     private _cocos: CocosFXProtocol;
 	private _localize: nls.LocalizeFunc = nls.loadMessageBundle();
 	private _breakpoints = new Map<string, Array<BreakpointInfo>>();
@@ -360,6 +360,10 @@ class CocosDebugSession extends DebugSession {
             const sources = result.sources;
             this._remoteRoot = this._getRemoteRoot(sources);
 			for (const source of sources) {
+                // TODO: support eval source
+				if (!source.url) {
+					continue;
+				}
 				let url = this._getRemoteScriptPath(source.url);
 				this._sourceActorMap[url] = source.actor;
 			};
@@ -395,6 +399,9 @@ class CocosDebugSession extends DebugSession {
 		let findPath = '';
 		for (let source of sources) {
 			let url = source.url;
+			if (!url) {
+				continue;
+			}
 			if (url.endsWith('main.js') && url.length < length) {
 				length = url.length;
 				findPath = url;
@@ -618,10 +625,6 @@ class CocosDebugSession extends DebugSession {
 		this.sendResponse(response);
 	}
 
-	protected setFunctionBreakPointsRequest(response: DebugProtocol.SetFunctionBreakpointsResponse, args: DebugProtocol.SetFunctionBreakpointsArguments): void {
-		console.log('setFunctionBreakPointsRequest');
-	}
-
 	//----------- statcktrace request ------------------------------------------------------
 
 	protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
@@ -649,6 +652,11 @@ class CocosDebugSession extends DebugSession {
 			const responseFrames = backtraceResponse.frames;
 			const frames = new Array<Promise<StackFrame>>();
 			for (let frame of responseFrames) {
+				// TODO: support eval frame, skip now
+				if (! frame.where.source.url) {
+					continue;
+				}
+
 				frames.push(this._createStackFrame(frame));
 			}
 
@@ -677,7 +685,8 @@ class CocosDebugSession extends DebugSession {
 		const column = frame.where.column;
 		const frameRefrence = this._frameHandles.create(frame);
 
-		let localPath = this._getLocalPath(frame.source.url);
+		let url = this._getValidUrl(frame.source);
+		let localPath = this._getLocalPath(url);
 		const source = new Source(Path.basename(localPath), localPath);
 
         if (frame.type === 'call') {
@@ -1063,7 +1072,7 @@ class CocosDebugSession extends DebugSession {
 			expression: this._createEvaluateExpression(expression)
 		};
 
-		// should skip first reply
+		// skip first reply
 		this._cocos.dummyCommand();
 
 		this._cocos.command2(request).then(evalResponse => {
@@ -1098,6 +1107,19 @@ class CocosDebugSession extends DebugSession {
 
 	private _sendCocosResponse(response: DebugProtocol.Response, message: string) {
 		this.sendErrorResponse(response, 2013, `cocos request failed (reason: ${message})`, ErrorDestination.Telemetry);
+	}
+
+    /**
+	 * If some codes is generated dynamically, thre is not a url for it,
+	 * but we can get its introductionUrl.
+	 */
+	private _getValidUrl(source: any): string {
+		if (source.url) {
+			return source.url;
+		}
+		else {
+			return source.introductionUrl;
+		}
 	}
 
 	private _createStoppedEvent(body: any): DebugProtocol.StoppedEvent {

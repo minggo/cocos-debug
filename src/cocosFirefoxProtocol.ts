@@ -138,7 +138,7 @@ export class CocosFXProtocol extends EE.EventEmitter {
 	}
 
 	private execute(data): void {
-		this._rawData += data;
+		this._rawData += data.toString();
 		let packet;
         while(packet = this.extractPacket()) {
 
@@ -164,7 +164,7 @@ export class CocosFXProtocol extends EE.EventEmitter {
 
 			} catch (e) {
 				// Can not parse the message from remote.
-				this.emitEvent(new CocosFXEvent('error', 'received error packet: invalid content: ' + data));
+				this.emitEvent(new CocosFXEvent('error', 'received error packet: invalid content: ' + packet));
 			}
 		}
 	}
@@ -187,8 +187,8 @@ export class CocosFXProtocol extends EE.EventEmitter {
 
         if (this._bodyLength === 0) {
 			let countString = this._rawData.substring(0, this._bodyStartIndex - 1);
-			if (!/^[0-9]+$/.exec(countString)) {
-				this.emitEvent(new CocosFXEvent('error', 'received error packet: invalid length'));
+			if (!/^[0-9]+$/.test(countString)) {
+				this.emitEvent(new CocosFXEvent('error', 'received error packet: invalid length ' + countString));
 				return;
 			}
 
@@ -197,12 +197,17 @@ export class CocosFXProtocol extends EE.EventEmitter {
 
 		// The body length is byte length
 		const resRawByteLength = Buffer.byteLength(this._rawData, 'utf8');
+
 		if (resRawByteLength - this._bodyStartIndex  >= this._bodyLength) {
 			const buf = new Buffer(resRawByteLength);
 			buf.write(this._rawData);
 
-			let packet = buf.slice(this._bodyStartIndex, this._bodyStartIndex + this._bodyLength).toString();
+			let packet = buf.slice(this._bodyStartIndex, this._bodyStartIndex + this._bodyLength).toString('utf8');
 			this._rawData = buf.slice(this._bodyStartIndex + this._bodyLength).toString();
+
+			console.log('_bodyStartIndex: ' + this._bodyStartIndex);
+			console.log('_bodyLength: ' + this._bodyLength);
+			console.log('resRawByteLength: ' + resRawByteLength);
 
 			this._bodyStartIndex = 0;
 			this._bodyLength = 0;

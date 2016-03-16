@@ -2,6 +2,7 @@
 
 cwd=$(pwd)
 dst="$cwd/cocos-debug"
+out="$dst/out"
 zipfile="$cwd/cocos-debug.zip"
 
 # compile typescript
@@ -16,6 +17,7 @@ if [ -f "$zipfile" ]; then
 fi
 
 mkdir "$dst"
+mkdir "$out"
 
 # copy files
 package_path="$cwd/package.json"
@@ -23,8 +25,8 @@ cocosFXDebug="$cwd/out/cocosFXDebug.js"
 cocosFXProtocol="$cwd/out/cocosFirefoxProtocol.js"
 
 cp "$package_path" "$dst"
-cp "$cocosFXDebug" "$dst"
-cp "$cocosFXProtocol" "$dst"
+cp "$cocosFXDebug" "$out"
+cp "$cocosFXProtocol" "$out"
 
 # npm install
 cd ./cocos-debug
