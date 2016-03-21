@@ -62,12 +62,14 @@ class BreakpointInfo {
 	line: number;
 	column: number;
 	actualLine: number;
+	condition: any;
 
-	public constructor(actor: string, line: number, column: number, actualLine: number) {
+	public constructor(actor: string, line: number, column: number, actualLine: number, condition?: string) {
 		this.actor = actor;
 		this.line = line;
 		this.column = column;
 		this.actualLine = actualLine;
+		this.condition = condition;
 	}
 }
 
@@ -77,7 +79,7 @@ class CocosDebugSession extends DebugSession {
 	private static THREAD_ID = 1;
 	private static ATTACH_TIMEOUT = 10000;
 
-	private _trace: boolean = false;
+	private _trace: boolean = true;
     private _cocos: CocosFXProtocol;
 	private _localize: nls.LocalizeFunc = nls.loadMessageBundle();
 	private _breakpoints = new Map<string, Array<BreakpointInfo>>();
@@ -179,10 +181,9 @@ class CocosDebugSession extends DebugSession {
 		response.body.supportsConfigurationDoneRequest = true;
 
 		// This debug adapter supports function breakpoints.
-		response.body.supportsFunctionBreakpoints = true;
+		response.body.supportsFunctionBreakpoints = false;
 
-		// TODO: supports conditional breakpoint
-		response.body.supportsConditionalBreakpoints = false;
+		response.body.supportsConditionalBreakpoints = true;
 
 		// TODO: supports evaluate for hovers
 		response.body.supportsEvaluateForHovers = false;
@@ -477,7 +478,7 @@ class CocosDebugSession extends DebugSession {
 		for (let l of lbs) {
 			for (let i = 0; i < bps.length; i++) {
 				let b = bps[i];
-				if (l.line === b.line && l.column === b.column) {
+				if (l.line === b.line && l.column === b.column && l.condition === b.condition) {
 					l.line = b.actualLine;
 					lbsAlreadSet.push(l);
 
@@ -587,7 +588,7 @@ class CocosDebugSession extends DebugSession {
 
     private _setBreakpoint(actor: string, b: DebugProtocol.SourceBreakpoint, scriptPath: string): Promise<Breakpoint> {
 
-		const request = {
+		const request: any = {
 			to: actor,
 			type: 'setBreakpoint',
 			location: {
@@ -595,6 +596,9 @@ class CocosDebugSession extends DebugSession {
 				column: b.column
 			}
 		};
+		if (b.condition) {
+			request.condition = b.condition;
+		}
 		return this._cocos.command2(request).then(result => {
 			if (result.error) {
 				return new Breakpoint(false);
@@ -603,11 +607,9 @@ class CocosDebugSession extends DebugSession {
 			let actualLine = b.line;
             if (result.actualLocation) {
 				actualLine = result.actualLocation.line;
-
-				this.log('bp', `line:${b.line}  actualLine:${actualLine}`);
 			}
 
-			this._breakpoints[scriptPath].push(new BreakpointInfo(result.actor, b.line, b.column, actualLine));
+			this._breakpoints[scriptPath].push(new BreakpointInfo(result.actor, b.line, b.column, actualLine, b.condition));
 			return new Breakpoint(true, actualLine);
 		}).catch(e => {
 			return new Breakpoint(false);
