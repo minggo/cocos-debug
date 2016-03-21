@@ -188,7 +188,7 @@ export class CocosFXProtocol extends EE.EventEmitter {
         if (this._bodyLength === 0) {
 			let countString = this._rawData.substring(0, this._bodyStartIndex - 1);
 			if (!/^[0-9]+$/.test(countString)) {
-				this.emitEvent(new CocosFXEvent('error', 'received error packet: invalid length ' + countString));
+				this.emitEvent(new CocosFXEvent('error', 'received error packet: invalid length: ' + countString));
 				return;
 			}
 
@@ -205,9 +205,9 @@ export class CocosFXProtocol extends EE.EventEmitter {
 			let packet = buf.slice(this._bodyStartIndex, this._bodyStartIndex + this._bodyLength).toString('utf8');
 			this._rawData = buf.slice(this._bodyStartIndex + this._bodyLength).toString();
 
-			console.log('_bodyStartIndex: ' + this._bodyStartIndex);
-			console.log('_bodyLength: ' + this._bodyLength);
-			console.log('resRawByteLength: ' + resRawByteLength);
+			// console.log('_bodyStartIndex: ' + this._bodyStartIndex);
+			// console.log('_bodyLength: ' + this._bodyLength);
+			// console.log('resRawByteLength: ' + resRawByteLength);
 
 			this._bodyStartIndex = 0;
 			this._bodyLength = 0;

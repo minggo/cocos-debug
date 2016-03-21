@@ -210,6 +210,10 @@ class CocosDebugSession extends DebugSession {
 			this._localRoot = args.cwd;
 			this._localScriptStartIndex = this._localRoot.length + 1;
 			this._localEngineRoot = this._getLocalEngineRoot(this._localRoot);
+			if (!this._localEngineRoot) {
+				this._termiated('Not a valid project.');
+				return;
+			}
 			this._cocos.startDispatch(socket, socket);
 			this._initialize(response);
 		});
