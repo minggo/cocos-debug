@@ -1,7 +1,7 @@
 {
 	"name": "cocos-debug",
 	"displayName": "Cocos Debug",
-	"version": "0.10.18",
+	"version": "0.0.1",
 	"publisher": "chukong technology",
 	"description": "Debugger for cocos JSB programs",
 	"author": {
