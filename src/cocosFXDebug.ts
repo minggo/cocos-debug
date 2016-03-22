@@ -262,8 +262,8 @@ class CocosDebugSession extends DebugSession {
 		}
 
 		// project created by cocos console?
-		engineRoot = Path.join(scriptRoot, 'frameworks/cocos2d-x/cocos/scripting/js-bindings');
-		if (CocosDebugSession._dirExists(engineRoot)) {
+		engineRoot = Path.join(scriptRoot, './main.js');
+		if (Fs.existsSync(engineRoot)) {
 			return engineRoot;
 		}
 	}
