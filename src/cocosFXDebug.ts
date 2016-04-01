@@ -295,6 +295,9 @@ class CocosDebugSession extends DebugSession {
 			this.sendResponse(respond);
 		}).catch(e => {
 			console.error(e);
+			if (e.stack)
+			    console.error(e.stack);
+
 			this._sendCocosResponse(respond, e);
 		});
 	}
@@ -459,7 +462,7 @@ class CocosDebugSession extends DebugSession {
 		// get source actor
 		const actor = this._getActor(path);
 		if (!actor) {
-			this.sendErrorResponse(response, 2012, 'no valid source specified', null, ErrorDestination.Telemetry);
+			this._sendCocosResponse(response, `no valid source specified ${path}`);
 			return;
 		}
 
@@ -536,6 +539,8 @@ class CocosDebugSession extends DebugSession {
 
 	private _getActor(path: string): string {
 		path = path.substring(this._localScriptStartIndex);
+		// conver to unix path, because the path from JSB remote is unix path
+		path = path.split('\\').join('/');
 		return this._sourceActorMap[path];
 	}
 
