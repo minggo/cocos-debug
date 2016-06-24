@@ -78,6 +78,8 @@ class CocosDebugSession extends DebugSession {
 	// we don't support multiple threads, so we can use a hardcoded ID for the default thread
 	private static THREAD_ID = 1;
 	private static ATTACH_TIMEOUT = 10000;
+	private static IPV4_LOOPBACK_ADDRESS = '127.0.0.1';
+	private static IPV6_LOOPBACK_ADDRESS = '::1';
 
 	private _trace: boolean = true;
     private _cocos: CocosFXProtocol;
@@ -195,7 +197,7 @@ class CocosDebugSession extends DebugSession {
 
 	protected attachRequest(response: DebugProtocol.AttachResponse, args: AttachRequestArguments): void {
 
-		const address = args.address ? args.address : '127.0.0.1';
+		var address = args.address === 'localhost' ? CocosDebugSession.IPV4_LOOPBACK_ADDRESS : args.address;
 		const timeout = args.timeout ? args.timeout : CocosDebugSession.ATTACH_TIMEOUT;
 
 		this.log('ar', `attachRequest: address: ${address} port: ${args.port}`);
@@ -226,14 +228,20 @@ class CocosDebugSession extends DebugSession {
 			}
 			else {
 				if (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET') {
-					const now = new Date().getTime();
+					var now = new Date().getTime();
 					if (now < endTime) {
 						setTimeout(() => {
-							this.log('ar', 'attachRequest: retry socket.connect');
-							socket.connect(args.port);
+							this.log('ar', `attachRequest: retry connect to ${address}`);
+							socket.connect(args.port, address);
 						}, 200);  // retry afater 200 ms
 					}
 					else {
+						// try ipv6 loopback address if uses ipv4 loopback address
+						if (address === CocosDebugSession.IPV4_LOOPBACK_ADDRESS) {
+							address = CocosDebugSession.IPV6_LOOPBACK_ADDRESS;
+							now = new Date().getTime();
+							socket.connect(args.port, address)
+						}
 						this.sendErrorResponse(response, 2009, this._localize('VSND2009', "cannot connect to JSB (timeout after {_timeout}ms)"), { _timeout: timeout });
 					}
 				}
